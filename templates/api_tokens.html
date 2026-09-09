@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}API tokens · {{ branding.name }}{% endblock %}
+{% block content %}
+<h3 class="mb-3">API tokens</h3>
+<p class="small-muted mb-4">
+  Bearer tokens for programmatic deploys. Use <code>Authorization: Bearer &lt;token&gt;</code> when calling the API.
+  Each token inherits the permissions of the user who created it (admin tokens can deploy any repo; regular tokens only their assigned repos).
+</p>
+
+{% if new_token %}
+<div class="alert alert-success">
+  <h6 class="mb-2"><i class="bi bi-check2-circle"></i> Token created — copy it now</h6>
+  <p class="small mb-2">This is the only time the full token will be shown. Store it somewhere safe.</p>
+  <div class="input-group input-group-sm">
+    <input class="form-control mono" id="new-token-field" value="{{ new_token }}" readonly>
+    <button class="btn btn-outline-secondary" type="button" id="copy-new-token" title="Copy">
+      <i class="bi bi-clipboard"></i>
+    </button>
+  </div>
+  <script>
+    document.getElementById('copy-new-token').addEventListener('click', function () {
+      const inp = document.getElementById('new-token-field');
+      inp.select();
+      try { navigator.clipboard.writeText(inp.value); } catch (e) { document.execCommand('copy'); }
+      this.innerHTML = '<i class="bi bi-check2 text-success"></i>';
+    });
+  </script>
+</div>
+{% endif %}
+
+<div class="row">
+  <div class="col-lg-7">
+    <form method="post" action="{{ url_for('api.tokens_create') }}" class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Create a new token</h5>
+        <div class="row g-2 align-items-end">
+          <div class="col">
+            <label class="form-label small text-muted mb-1">Name (so you remember what it's for)</label>
+            <input class="form-control form-control-sm" name="name" required placeholder="CI deploy bot, my laptop, GitHub Action, ...">
+          </div>
+          <div class="col-auto">
+            <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-plus-lg"></i> Create</button>
+          </div>
+        </div>
+      </div>
+    </form>
+
+    <div class="card">
+      <div class="card-body p-0">
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr>
+            <th class="ps-3">Name</th><th>Prefix</th><th>Created</th>
+            <th>Last used</th><th>Status</th><th></th>
+          </tr></thead>
+          <tbody>
+            {% for t in tokens %}
+              <tr>
+                <td class="ps-3 fw-semibold">{{ t.name }}</td>
+                <td><code>{{ t.token_prefix }}…</code></td>
+                <td class="small-muted">{{ t.created_at.strftime('%Y-%m-%d') }}</td>
+                <td class="small-muted">{% if t.last_used_at %}{{ t.last_used_at.strftime('%Y-%m-%d %H:%M') }}<br><span class="text-muted">{{ t.last_used_ip or '' }}</span>{% else %}—{% endif %}</td>
+                <td>
+                  {% if t.is_active %}
+                    <span class="badge bg-success-subtle text-success">active</span>
+                  {% else %}
+                    <span class="badge bg-secondary">revoked {{ t.revoked_at.strftime('%Y-%m-%d') }}</span>
+                  {% endif %}
+                </td>
+                <td class="text-end pe-3">
+                  {% if t.is_active %}
+                    <form method="post" action="{{ url_for('api.tokens_revoke', token_id=t.id) }}" class="d-inline"
+                          data-confirm="Revoke token '{{ t.name }}'?\n\nAny script using this token will stop working immediately."
+                          data-confirm-ok="Revoke">
+                      <button class="btn btn-sm btn-outline-danger" type="submit" title="Revoke">
+                        <i class="bi bi-x-circle"></i>
+                      </button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6" class="text-center text-muted py-4">No tokens yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-body">
+        <h6 class="card-title">How to use it</h6>
+        <p class="small-muted">Trigger a deploy from any script:</p>
+        <pre class="cmd-pre">curl -X POST \
+  -H "Authorization: Bearer pkw_..." \
+  https://deploy.pazl.info/api/repos/&lt;owner&gt;/&lt;repo&gt;/branches/&lt;branch&gt;/deploy</pre>
+        <p class="small-muted mt-2 mb-0">Returns <code>202 Accepted</code> with a <code>deploy_id</code> and <code>live_url</code> you can open in the browser.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

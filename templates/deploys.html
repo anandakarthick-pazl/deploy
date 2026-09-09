@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}Deploys · {{ branding.name }}{% endblock %}
+
+{% macro status_badge(s) %}
+  {% if s == 'success' %}<span class="badge badge-status-success">success</span>
+  {% elif s == 'failed' %}<span class="badge badge-status-failed">failed</span>
+  {% elif s == 'awaiting' %}<span class="badge bg-warning text-dark">awaiting</span>
+  {% else %}<span class="badge badge-status-pending">pending</span>
+  {% endif %}
+{% endmacro %}
+
+{% set any_filter = filters.repo or filters.branch or filters.status or filters.pusher or filters.commit or filters.q %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-end mb-3">
+  <div>
+    <h3 class="mb-0">Deploy history</h3>
+    <div class="small-muted">
+      {% if any_filter %}
+        Showing <b>{{ items|length }}</b> of <b>{{ total }}</b> filtered deploys
+      {% else %}
+        <b>{{ total }}</b> deploy(s) total
+      {% endif %}
+    </div>
+  </div>
+  {% if any_filter %}
+    <a href="{{ url_for('admin.deploys') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-x-lg"></i> Clear filters
+    </a>
+  {% endif %}
+</div>
+
+<form method="get" class="card mb-3">
+  <div class="card-body py-3">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label small text-muted mb-1">Repository</label>
+        <select id="filter-repo" class="form-select form-select-sm" name="repo">
+          <option value="">All repos</option>
+          {% for r in repo_choices %}
+            <option value="{{ r }}" {% if r == filters.repo %}selected{% endif %}>{{ r }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small text-muted mb-1">Branch</label>
+        <select id="filter-branch" class="form-select form-select-sm" name="branch"
+                {% if not filters.repo %}disabled{% endif %} onchange="this.form.submit()">
+          <option value="">
+            {% if filters.repo %}All branches{% else %}Select a repo first{% endif %}
+          </option>
+          {% for b in branch_choices %}
+            <option value="{{ b }}" {% if b == filters.branch %}selected{% endif %}>{{ b }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small text-muted mb-1">Status</label>
+        <select class="form-select form-select-sm" name="status" onchange="this.form.submit()">
+          <option value="">All statuses</option>
+          {% for s in status_choices %}
+            <option value="{{ s }}" {% if s == filters.status %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small text-muted mb-1">Pusher</label>
+        <select class="form-select form-select-sm" name="pusher" onchange="this.form.submit()">
+          <option value="">All pushers</option>
+          {% for p in pusher_choices %}
+            <option value="{{ p }}" {% if p == filters.pusher %}selected{% endif %}>{{ p }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small text-muted mb-1">Commit (prefix)</label>
+        <input type="text" class="form-control form-control-sm mono" name="commit"
+               value="{{ filters.commit }}" placeholder="e.g. bd5d899">
+      </div>
+      <div class="col-md-1 d-grid">
+        <button class="btn btn-sm btn-primary" type="submit">
+          <i class="bi bi-funnel"></i>
+        </button>
+      </div>
+    </div>
+    <div class="row g-2 mt-1">
+      <div class="col-md-12">
+        <label class="form-label small text-muted mb-1">
+          <i class="bi bi-search"></i> Search log content / commit message / error
+        </label>
+        <input type="search" class="form-control form-control-sm" name="q"
+               value="{{ filters.q }}"
+               placeholder='Any text — e.g. "npm ERR!" or "permission denied" or part of a commit message'>
+      </div>
+    </div>
+  </div>
+</form>
+
+{% if not items %}
+  <div class="alert alert-info">
+    {% if any_filter %}No deploys match the current filters.{% else %}No deploys yet.{% endif %}
+  </div>
+{% else %}
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr>
+        <th class="ps-3">When</th><th>Build</th><th>Repo / Branch</th><th>Status</th><th>Commit</th>
+        <th>Pusher</th><th>Duration</th><th></th>
+      </tr></thead>
+      <tbody>
+        {% for d in items %}
+          <tr>
+            <td class="ps-3 small-muted">{{ d.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td><b>#{{ d.build_number or '—' }}</b></td>
+            <td><code>{{ d.repo_name }}</code> / <code>{{ d.branch_name }}</code></td>
+            <td>{{ status_badge(d.status) }}</td>
+            <td>{% if d.commit_sha %}<code>{{ d.commit_sha[:7] }}</code>{% endif %}</td>
+            <td class="small-muted">{{ d.pusher or '—' }}</td>
+            <td class="small-muted">
+              {% if d.finished_at %}{{ (d.finished_at - d.started_at).total_seconds()|round(1) }}s{% endif %}
+            </td>
+            <td class="pe-3 text-nowrap">
+              <a class="btn btn-link btn-sm p-0 me-2" href="{{ url_for('admin.deploy_detail', deploy_id=d.id) }}"
+                 title="View build details">
+                <i class="bi bi-eye"></i>
+              </a>
+              {% if d.branch_id %}
+                <a class="btn btn-link btn-sm p-0 me-2 text-warning"
+                   href="{{ url_for('admin.branch_edit', branch_id=d.branch_id) }}"
+                   title="Edit branch configuration ({{ d.branch_name }})">
+                  <i class="bi bi-pencil"></i>
+                </a>
+              {% endif %}
+              {% if d.status != 'pending' %}
+                <form method="post" action="{{ url_for('admin.deploy_delete', deploy_id=d.id) }}" class="d-inline"
+                      data-confirm="Delete Build #{{ d.build_number }} ({{ d.repo_name }}/{{ d.branch_name }})?\n\nSubsequent builds for this branch will be renumbered to fill the gap."
+                      data-confirm-ok="Delete build">
+                  <button class="btn btn-link btn-sm p-0 text-danger" type="submit" title="Delete this build">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<script>
+(function(){
+  const repoBranches = {{ repo_branches_map | tojson }};
+  const repoSel   = document.getElementById('filter-repo');
+  const branchSel = document.getElementById('filter-branch');
+
+  repoSel.addEventListener('change', function () {
+    const repo = this.value;
+    // Repopulate branch dropdown for the chosen repo (or disable if "All repos").
+    branchSel.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = repo ? 'All branches' : 'Select a repo first';
+    branchSel.appendChild(placeholder);
+    if (repo) {
+      (repoBranches[repo] || []).forEach(function (b) {
+        const o = document.createElement('option');
+        o.value = b;
+        o.textContent = b;
+        branchSel.appendChild(o);
+      });
+      branchSel.disabled = false;
+    } else {
+      branchSel.disabled = true;
+    }
+    // Submit so the rest of the page (counts, table, status/pusher choices) refreshes.
+    this.form.submit();
+  });
+})();
+</script>
+
+{% if pages > 1 %}
+  {% set qs = request.args.to_dict() %}
+  {% set _ = qs.pop('page', None) %}
+  {% set qs_str = qs|urlencode %}
+  <nav class="mt-3" aria-label="Deploy history pagination">
+    <ul class="pagination pagination-sm justify-content-center mb-0">
+      <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+        <a class="page-link" href="?page={{ page - 1 }}{% if qs_str %}&{{ qs_str }}{% endif %}">«</a>
+      </li>
+
+      {# Show first page, last page, neighbors of current, with ellipses #}
+      {% set window = 2 %}
+      {% set pages_to_show = [] %}
+      {% for p in range(1, pages + 1) %}
+        {% if p == 1 or p == pages or (p >= page - window and p <= page + window) %}
+          {% set _ = pages_to_show.append(p) %}
+        {% endif %}
+      {% endfor %}
+      {% set prev = namespace(p=0) %}
+      {% for p in pages_to_show %}
+        {% if prev.p and p - prev.p > 1 %}
+          <li class="page-item disabled"><span class="page-link">…</span></li>
+        {% endif %}
+        <li class="page-item {% if p == page %}active{% endif %}">
+          <a class="page-link" href="?page={{ p }}{% if qs_str %}&{{ qs_str }}{% endif %}">{{ p }}</a>
+        </li>
+        {% set prev.p = p %}
+      {% endfor %}
+
+      <li class="page-item {% if page >= pages %}disabled{% endif %}">
+        <a class="page-link" href="?page={{ page + 1 }}{% if qs_str %}&{{ qs_str }}{% endif %}">»</a>
+      </li>
+    </ul>
+    <div class="text-center small-muted mt-1">
+      Page {{ page }} of {{ pages }} · {{ per_page }} per page
+    </div>
+  </nav>
+{% endif %}
+{% endblock %}

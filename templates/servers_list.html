@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Servers · {{ branding.name }}{% endblock %}
+{% block content %}
+<style>
+  .srv-dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:8px; vertical-align: middle; }
+  .srv-dot.ok      { background:#10b981; box-shadow: 0 0 0 2px rgba(16,185,129,.18); }
+  .srv-dot.fail    { background:#ef4444; }
+  .srv-dot.unknown { background:#94a3b8; }
+  .srv-current     { background: var(--accent-soft); }
+</style>
+
+<div class="d-flex justify-content-between align-items-end mb-3">
+  <div>
+    <h3 class="mb-0">Servers</h3>
+    <div class="small-muted">
+      You are currently working against
+      {% if current %}
+        <b>{{ current.name }}</b> <code>({{ current.label }})</code>
+      {% else %}
+        <b>the local server</b>
+      {% endif %}.
+    </div>
+  </div>
+  {% if has_perm('servers.manage') %}
+    <a class="btn btn-primary" href="{{ url_for('servers.new') }}">
+      <i class="bi bi-plus-lg"></i> Add server
+    </a>
+  {% endif %}
+</div>
+
+<div class="card mb-3">
+  <div class="card-body p-0">
+    <table class="table align-middle mb-0">
+      <thead><tr>
+        <th class="ps-3">Name</th>
+        <th>Endpoint</th>
+        <th>Auth</th>
+        <th>Last check</th>
+        <th>Active</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+        <!-- Always-visible "Local" entry -->
+        <tr class="{% if not current %}srv-current{% endif %}">
+          <td class="ps-3 fw-semibold">
+            <span class="srv-dot ok"></span> Local server
+          </td>
+          <td><code>this host (no SSH)</code></td>
+          <td>—</td>
+          <td class="small-muted">—</td>
+          <td>
+            {% if not current %}<span class="badge bg-primary">current</span>{% endif %}
+          </td>
+          <td class="text-end pe-3">
+            {% if current %}
+              <form method="post" action="{{ url_for('servers.switch_local') }}" class="d-inline">
+                <button class="btn btn-sm btn-outline-primary" type="submit">
+                  <i class="bi bi-arrow-left-right"></i> Switch
+                </button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+
+        {% for s in servers %}
+          <tr class="{% if current and current.id == s.id %}srv-current{% endif %}">
+            <td class="ps-3 fw-semibold">
+              <span class="srv-dot {% if s.last_check_ok %}ok{% elif s.last_check_ok is false %}fail{% else %}unknown{% endif %}"></span>
+              {{ s.name }}
+              {% if s.description %}<div class="small-muted" style="font-weight:400;">{{ s.description }}</div>{% endif %}
+            </td>
+            <td><code>{{ s.label }}</code></td>
+            <td class="small-muted">{{ s.auth_type }}</td>
+            <td class="small-muted">
+              {% if s.last_check_at %}
+                {{ s.last_check_at.strftime('%Y-%m-%d %H:%M') }}<br>
+                <span style="color: {{ '#10b981' if s.last_check_ok else '#ef4444' }};">
+                  {{ 'OK' if s.last_check_ok else 'FAIL' }}
+                </span>
+                {% if s.last_check_msg %}<div class="small">{{ s.last_check_msg[:120] }}</div>{% endif %}
+              {% else %}never{% endif %}
+            </td>
+            <td>
+              {% if current and current.id == s.id %}<span class="badge bg-primary">current</span>{% endif %}
+            </td>
+            <td class="text-end pe-3 text-nowrap">
+              <button class="btn btn-sm btn-outline-secondary test-btn" data-sid="{{ s.id }}" title="Test connection">
+                <i class="bi bi-wifi"></i>
+              </button>
+              {% if not (current and current.id == s.id) %}
+                <form method="post" action="{{ url_for('servers.switch', sid=s.id) }}" class="d-inline">
+                  <button class="btn btn-sm btn-outline-primary" type="submit" title="Switch to this server">
+                    <i class="bi bi-arrow-left-right"></i>
+                  </button>
+                </form>
+              {% endif %}
+              {% if has_perm('servers.manage') %}
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('servers.edit', sid=s.id) }}" title="Edit">
+                  <i class="bi bi-pencil"></i>
+                </a>
+                <form method="post" action="{{ url_for('servers.delete', sid=s.id) }}" class="d-inline"
+                      data-confirm="Delete server '{{ s.name }}'?\n\nUsers currently switched to it will fall back to local."
+                      data-confirm-ok="Delete server">
+                  <button class="btn btn-sm btn-outline-danger" type="submit" title="Delete">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+document.querySelectorAll('.test-btn').forEach(btn => btn.addEventListener('click', async function () {
+  const sid = this.dataset.sid;
+  this.disabled = true;
+  const orig = this.innerHTML;
+  this.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  try {
+    const r = await fetch(`/servers/${sid}/test`, { method: 'POST' });
+    const j = await r.json();
+    this.disabled = false;
+    this.innerHTML = orig;
+    alert((j.ok ? '✅ ' : '❌ ') + j.message);
+    setTimeout(() => location.reload(), 200);
+  } catch (e) {
+    this.disabled = false;
+    this.innerHTML = orig;
+    alert('Request failed: ' + e);
+  }
+}));
+</script>
+{% endblock %}

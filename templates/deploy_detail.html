@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Deploy #{{ d.id }} · Packwork Deploy{% endblock %}
+
+{% macro status_badge(s) %}
+  {% if s == 'success' %}<span class="badge badge-status-success">success</span>
+  {% elif s == 'failed' %}<span class="badge badge-status-failed">failed</span>
+  {% elif s == 'awaiting' %}<span class="badge bg-warning text-dark">awaiting manual deploy</span>
+  {% else %}<span class="badge badge-status-pending">pending</span>
+  {% endif %}
+{% endmacro %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('admin.deploys') }}">Deploys</a></li>
+    <li class="breadcrumb-item active">#{{ d.id }}</li>
+  </ol>
+</nav>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start mb-3">
+      <h4 class="mb-0">
+        Build <b>#{{ d.build_number or '—' }}</b> · {{ d.repo_name }} / {{ d.branch_name }}
+        {{ status_badge(d.status) }}
+      </h4>
+      <div class="d-flex gap-2">
+        {% if d.status == 'pending' %}
+          <a class="btn btn-warning btn-sm" href="{{ url_for('admin.deploy_live', deploy_id=d.id) }}">
+            <i class="bi bi-broadcast"></i> View live
+          </a>
+        {% elif d.status == 'awaiting' %}
+          <form method="post" action="{{ url_for('admin.deploy_run', deploy_id=d.id) }}"
+                data-confirm="Run this deploy now?\n\nIt will pull the latest code and run the configured commands."
+                data-confirm-ok="Deploy now" data-confirm-class="btn-warning">
+            <button class="btn btn-warning btn-sm" type="submit">
+              <i class="bi bi-play-fill"></i> Deploy now
+            </button>
+          </form>
+        {% endif %}
+        {% if d.status == 'success' and d.branch_id and d.commit_sha %}
+          <form method="post" action="{{ url_for('admin.deploy_rollback', deploy_id=d.id) }}"
+                data-confirm="Roll back to Build #{{ d.build_number }} ({{ d.commit_sha[:7] }})?\n\nThis resets the working tree to that commit and re-runs the configured commands. The repo will sit on that older commit until your next push."
+                data-confirm-ok="Roll back" data-confirm-class="btn-warning">
+            <button class="btn btn-outline-warning btn-sm" type="submit">
+              <i class="bi bi-arrow-counterclockwise"></i> Redeploy this commit
+            </button>
+          </form>
+        {% endif %}
+        {% if d.status != 'pending' %}
+          <form method="post" action="{{ url_for('admin.deploy_delete', deploy_id=d.id) }}"
+                data-confirm="Delete Build #{{ d.build_number }}?\n\nThis removes the deploy record and its log file. Subsequent builds for this branch will be renumbered to fill the gap."
+                data-confirm-ok="Delete build">
+            <button class="btn btn-outline-danger btn-sm" type="submit">
+              <i class="bi bi-trash"></i> Delete this build
+            </button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+    <table class="table table-sm">
+      <tbody>
+        <tr><th>Started</th><td>{{ d.started_at }}</td></tr>
+        <tr><th>Finished</th><td>{{ d.finished_at or '—' }}</td></tr>
+        <tr><th>Duration</th><td>
+          {% if d.finished_at %}{{ (d.finished_at - d.started_at).total_seconds()|round(2) }}s{% else %}—{% endif %}
+        </td></tr>
+        <tr><th>Pusher</th><td>{{ d.pusher or '—' }}</td></tr>
+        <tr><th>Old commit</th><td><code>{{ d.old_sha or '—' }}</code></td></tr>
+        <tr><th>New commit</th><td><code>{{ d.commit_sha or '—' }}</code></td></tr>
+        <tr><th>Message</th><td>{{ d.commit_msg or '—' }}</td></tr>
+        {% if d.error %}<tr><th>Error</th><td><pre class="mb-0">{{ d.error }}</pre></td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if d.log %}
+<h5>Command output</h5>
+<pre class="cmd-pre">{{ d.log }}</pre>
+{% endif %}
+{% endblock %}

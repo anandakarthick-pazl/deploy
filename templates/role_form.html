@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit role' if role else 'New role' }} · {{ branding.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('admin.roles_list') }}">Roles</a></li>
+    <li class="breadcrumb-item active">{{ ('Edit ' + role.name) if role else 'New role' }}</li>
+  </ol>
+</nav>
+
+<form method="post" class="card">
+  <div class="card-body">
+    <div class="row">
+      <div class="col-md-5 mb-3">
+        <label class="form-label">Name</label>
+        <input class="form-control" name="name" required value="{{ name }}"
+               {% if role and role.is_system %}readonly title="Built-in roles can't be renamed"{% endif %}>
+      </div>
+      <div class="col-md-7 mb-3">
+        <label class="form-label">Description <span class="text-muted small">(optional)</span></label>
+        <input class="form-control" name="description" value="{{ description or '' }}"
+               placeholder="What this role is for, e.g. 'CI bots'">
+      </div>
+    </div>
+
+    {% if role %}
+      <div class="small-muted mb-3"><b>{{ user_count }}</b> user(s) currently have this role.</div>
+    {% endif %}
+
+    <h6 class="mt-2 mb-2">Permissions</h6>
+    <p class="small-muted mb-3">Pick which menu items + actions this role grants. Admin users always have everything regardless.</p>
+
+    <div class="row g-3">
+      {% for category, items in grouped %}
+        <div class="col-md-6">
+          <div class="border rounded p-3 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <h6 class="mb-0">{{ category }}</h6>
+              <div>
+                <a href="#" class="small text-decoration-none cat-toggle me-2" data-cat="{{ category }}" data-on="1">Select all</a>
+                <a href="#" class="small text-decoration-none cat-toggle"        data-cat="{{ category }}" data-on="0">None</a>
+              </div>
+            </div>
+            {% for key, label in items %}
+              <div class="form-check">
+                <input class="form-check-input perm-cb" type="checkbox"
+                       name="perms" value="{{ key }}" id="p-{{ key }}"
+                       data-cat="{{ category }}"
+                       {% if key in selected_keys %}checked{% endif %}>
+                <label class="form-check-label small" for="p-{{ key }}">
+                  {{ label }} <code class="ms-1 small-muted">{{ key }}</code>
+                </label>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="mt-4">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> {{ 'Save changes' if role else 'Create role' }}</button>
+      <a class="btn btn-link" href="{{ url_for('admin.roles_list') }}">Cancel</a>
+    </div>
+  </div>
+</form>
+
+<script>
+document.querySelectorAll('.cat-toggle').forEach(a => a.addEventListener('click', function (e) {
+  e.preventDefault();
+  const on  = this.dataset.on === '1';
+  const cat = this.dataset.cat;
+  document.querySelectorAll(`.perm-cb[data-cat="${cat}"]`).forEach(cb => cb.checked = on);
+}));
+</script>
+{% endblock %}

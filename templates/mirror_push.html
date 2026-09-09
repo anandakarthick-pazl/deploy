@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Mirror push #{{ push.id }} · Packwork Deploy{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('admin.dashboard') }}">Dashboard</a></li>
+    {% if branch %}
+      <li class="breadcrumb-item"><a href="{{ url_for('admin.repo_detail', repo_id=branch.repo.id) }}">{{ branch.repo.owner }}/{{ branch.repo.name }}</a></li>
+    {% endif %}
+    <li class="breadcrumb-item"><a href="{{ url_for('mirrors.mirror_history') }}">Mirror pushes</a></li>
+    <li class="breadcrumb-item active">#{{ push.id }}</li>
+  </ol>
+</nav>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start">
+      <div>
+        <h4 class="mb-1">
+          {{ push.mirror_label }}
+          <span id="status-badge" class="badge bg-secondary ms-1">{{ push.status }}</span>
+          <span id="auto-refresh-pill" class="badge bg-info-subtle text-info ms-1"
+                style="{% if push.status != 'running' %}display:none{% endif %}">
+            <i class="bi bi-arrow-clockwise"></i> auto-refreshing
+          </span>
+        </h4>
+        <div class="small-muted">
+          Remote: <code>{{ push.remote_url }}</code> · branch <code>{{ push.target_branch }}</code><br>
+          Triggered by <b>{{ push.triggered_by or '—' }}</b> ({{ push.trigger_type }})
+          · {{ push.started_at.strftime('%Y-%m-%d %H:%M:%S') }}
+          {% if push.source_sha %} · source <code>{{ push.source_sha[:10] }}</code>{% endif %}
+        </div>
+      </div>
+      <div class="text-end">
+        <div class="small-muted">files pushed</div>
+        <div class="h4 mb-0" id="files-changed">{{ push.files_changed if push.files_changed is not none else '—' }}</div>
+        <div class="small-muted mt-1">
+          held back: <b id="files-excluded">{{ push.files_excluded if push.files_excluded is not none else '—' }}</b>
+        </div>
+      </div>
+    </div>
+
+    <div id="error-row" class="alert alert-danger mt-3 mb-0" style="{% if not push.error %}display:none{% endif %}">
+      <i class="bi bi-exclamation-triangle"></i> <span id="error-text">{{ push.error or '' }}</span>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <pre id="log-pre" style="background:#0b1020; color:#d4d4d4; padding: 14px; margin: 0;
+                             font-size: 12.5px; line-height: 1.4; max-height: 70vh; overflow-y: auto;
+                             white-space: pre-wrap; word-break: break-all; border-radius: 0 0 6px 6px;">{{ push.log or '(starting…)' }}</pre>
+  </div>
+</div>
+
+<script>
+(function () {
+  const pushId  = {{ push.id }};
+  const logEl   = document.getElementById('log-pre');
+  const badgeEl = document.getElementById('status-badge');
+  const pillEl  = document.getElementById('auto-refresh-pill');
+  const errRow  = document.getElementById('error-row');
+  const errText = document.getElementById('error-text');
+  const fcEl    = document.getElementById('files-changed');
+  const feEl    = document.getElementById('files-excluded');
+
+  const CLASSES = {
+    running:    'badge bg-warning-subtle text-warning ms-1',
+    success:    'badge bg-success-subtle text-success ms-1',
+    failed:     'badge bg-danger-subtle text-danger ms-1',
+    no_changes: 'badge bg-secondary ms-1',
+  };
+  const LABEL = { no_changes: 'no changes' };
+
+  function paint(d) {
+    if (d.log) {
+      const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 30;
+      logEl.textContent = d.log;
+      if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+    }
+    badgeEl.className = CLASSES[d.status] || 'badge bg-secondary ms-1';
+    badgeEl.textContent = LABEL[d.status] || d.status;
+    if (d.files_changed !== null && d.files_changed !== undefined) fcEl.textContent = d.files_changed;
+    if (d.files_excluded !== null && d.files_excluded !== undefined) feEl.textContent = d.files_excluded;
+    if (d.error) { errText.textContent = d.error; errRow.style.display = ''; }
+  }
+
+  function poll() {
+    fetch("{{ url_for('mirrors.mirror_push_log', push_id=push.id) }}", { cache: 'no-store' })
+      .then(r => r.json())
+      .then(d => {
+        paint(d);
+        if (d.done) { pillEl.style.display = 'none'; return; }
+        setTimeout(poll, 1500);
+      })
+      .catch(() => setTimeout(poll, 4000));
+  }
+
+  {% if push.status == 'running' %}poll();{% else %}logEl.scrollTop = logEl.scrollHeight;{% endif %}
+})();
+</script>
+{% endblock %}

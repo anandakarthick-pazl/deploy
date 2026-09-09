@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Packwork Deploy{% endblock %}
+
+{% macro status_badge(s) %}
+  {% if s == 'success' %}<span class="badge badge-status-success">success</span>
+  {% elif s == 'failed' %}<span class="badge badge-status-failed">failed</span>
+  {% elif s == 'awaiting' %}<span class="badge bg-warning text-dark">awaiting</span>
+  {% else %}<span class="badge badge-status-pending">pending</span>
+  {% endif %}
+{% endmacro %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-end mb-4">
+  <div>
+    <h3 class="mb-0">Dashboard</h3>
+    <div class="small-muted">Welcome back, {{ current_user.username }}{% if current_user.is_admin %} (admin){% endif %}</div>
+  </div>
+  {% if current_user.is_admin %}
+    <a class="btn btn-primary" href="{{ url_for('admin.repo_new') }}"><i class="bi bi-plus-lg"></i> Add Repo</a>
+  {% endif %}
+</div>
+
+{% if awaiting %}
+<div class="alert alert-warning d-flex justify-content-between align-items-start mb-4" style="border-left: 4px solid #f59e0b;">
+  <div>
+    <div class="fw-semibold mb-1"><i class="bi bi-exclamation-triangle"></i> {{ awaiting|length }} push(es) awaiting manual deploy</div>
+    <div class="small">These branches have auto-deploy disabled — review and approve to apply.</div>
+  </div>
+  <a href="{{ url_for('admin.deploys') }}" class="small text-decoration-none">View all →</a>
+</div>
+<div class="card mb-4">
+  <div class="card-body p-0">
+    <table class="table align-middle mb-0">
+      <thead><tr>
+        <th class="ps-3">Received</th><th>Build</th><th>Repo / Branch</th><th>Commit</th>
+        <th>Pusher</th><th>Message</th><th></th>
+      </tr></thead>
+      <tbody>
+        {% for d in awaiting %}
+          <tr>
+            <td class="ps-3 small-muted">{{ d.started_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td><b>#{{ d.build_number or '—' }}</b></td>
+            <td><code>{{ d.repo_name }}</code> / <code>{{ d.branch_name }}</code></td>
+            <td>{% if d.commit_sha %}<code>{{ d.commit_sha[:7] }}</code>{% endif %}</td>
+            <td class="small-muted">{{ d.pusher or '—' }}</td>
+            <td class="small-muted text-truncate" style="max-width:280px;">{{ d.commit_msg or '' }}</td>
+            <td class="text-end pe-3">
+              <form method="post" action="{{ url_for('admin.deploy_run', deploy_id=d.id) }}" class="d-inline"
+                    data-confirm="Run deploy for {{ d.repo_name }}/{{ d.branch_name }} now?"
+                    data-confirm-ok="Deploy now" data-confirm-class="btn-warning">
+                <button class="btn btn-sm btn-warning" type="submit">
+                  <i class="bi bi-play-fill"></i> Deploy now
+                </button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="row g-3 mb-4" id="metrics-row">
+  <div class="col-md-6 col-lg-3">
+    <div class="metric-card repos">
+      <i class="bi bi-folder2-open"></i>
+      <div class="metric-label">Repositories</div>
+      <div class="metric-value" data-metric="repos">{{ metrics.repos }}</div>
+      <div class="small-muted"><span data-metric="branches">{{ metrics.branches }}</span> branch(es)</div>
+    </div>
+  </div>
+  <div class="col-md-6 col-lg-3">
+    <div class="metric-card success">
+      <i class="bi bi-check2-circle"></i>
+      <div class="metric-label">Successful builds</div>
+      <div class="metric-value" data-metric="success">{{ metrics.success }}</div>
+      <div class="small-muted">all-time</div>
+    </div>
+  </div>
+  <div class="col-md-6 col-lg-3">
+    <div class="metric-card failed">
+      <i class="bi bi-x-octagon"></i>
+      <div class="metric-label">Failed builds</div>
+      <div class="metric-value" data-metric="failed">{{ metrics.failed }}</div>
+      <div class="small-muted">all-time</div>
+    </div>
+  </div>
+  <div class="col-md-6 col-lg-3">
+    <div class="metric-card pending">
+      <i class="bi bi-hourglass-split"></i>
+      <div class="metric-label">In flight</div>
+      <div class="metric-value" data-metric="pending">{{ metrics.pending }}</div>
+      <div class="small-muted">currently running</div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h5 class="mb-0">Projects</h5>
+      {% if not repos %}<span class="small-muted">none yet</span>{% endif %}
+    </div>
+
+    {% if not repos and current_user.is_admin %}
+      <div class="alert alert-info mb-0 mt-3">No repos yet. Click <b>Add Repo</b> to register your first project.</div>
+    {% elif not repos %}
+      <div class="alert alert-warning mb-0 mt-3">You don't have access to any repos. Ask an admin to grant you access.</div>
+    {% endif %}
+
+    {% for repo in repos %}
+      <div class="d-flex justify-content-between align-items-start py-3 {% if not loop.last %}border-bottom{% endif %}">
+        <div class="me-3">
+          <a href="{{ url_for('admin.repo_detail', repo_id=repo.id) }}" class="text-decoration-none">
+            <span class="fw-semibold">{{ repo.owner }}/{{ repo.name }}</span>
+          </a>
+          {% if not repo.is_active %}<span class="badge bg-secondary ms-2">inactive</span>{% endif %}
+          <div class="small-muted mt-1">
+            {{ repo.branches|length }} branch(es)
+            {% if last_deploys[repo.id] %}
+              · last: <b>#{{ last_deploys[repo.id].build_number or '—' }}</b>
+              {{ status_badge(last_deploys[repo.id].status) }}
+              <span>{{ last_deploys[repo.id].started_at.strftime('%Y-%m-%d %H:%M') }}</span>
+              on <code>{{ last_deploys[repo.id].branch_name }}</code>
+            {% endif %}
+          </div>
+          {% if repo.branches %}
+            <div class="small mt-2">
+              {% for br in repo.branches|sort(attribute='name') %}
+                <span class="badge {% if br.auto_deploy %}bg-success-subtle text-success{% else %}bg-warning-subtle text-warning{% endif %} border me-1"
+                      title="{{ 'auto-deploy on push' if br.auto_deploy else 'manual deploy required on push' }}">
+                  {% if br.auto_deploy %}<i class="bi bi-lightning-charge"></i>{% else %}<i class="bi bi-hand-index"></i>{% endif %}
+                  <code>{{ br.name }}</code>
+                </span>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+        <div class="text-nowrap">
+          {% if repo.branches %}
+            <div class="btn-group">
+              <button type="button" class="btn btn-sm btn-success dropdown-toggle" data-bs-toggle="dropdown"
+                      title="Test build">
+                <i class="bi bi-play-fill"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li><h6 class="dropdown-header">Test build for branch</h6></li>
+                {% for br in repo.branches|sort(attribute='name') %}
+                  <li>
+                    <form method="post" action="{{ url_for('admin.branch_test_build', branch_id=br.id) }}"
+                          data-confirm="Trigger a test build for branch '{{ br.name }}'?"
+                          data-confirm-ok="Run build" data-confirm-class="btn-success">
+                      <button type="submit" class="dropdown-item">
+                        <i class="bi bi-arrow-right-short"></i> <code>{{ br.name }}</code>
+                      </button>
+                    </form>
+                  </li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.repo_detail', repo_id=repo.id) }}"
+             title="Manage repo (branches, commands, recipients)">
+            <i class="bi bi-gear"></i>
+          </a>
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.repo_edit', repo_id=repo.id) }}"
+             title="Edit repo">
+            <i class="bi bi-pencil"></i>
+          </a>
+          {% if current_user.is_admin %}
+            <form method="post" action="{{ url_for('admin.repo_delete', repo_id=repo.id) }}" class="d-inline"
+                  data-confirm="Delete {{ repo.owner }}/{{ repo.name }}?\n\nThis also removes every branch under this repo and its full deploy history. This action cannot be undone."
+                  data-confirm-ok="Delete repo">
+              <button class="btn btn-sm btn-outline-danger" type="submit" title="Delete repo">
+                <i class="bi bi-trash"></i>
+              </button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+{% if recent %}
+  <div class="card">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h5 class="mb-0">Recent deploys</h5>
+        <a href="{{ url_for('admin.deploys') }}" class="small">View all →</a>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>When</th><th>Build</th><th>Repo / Branch</th><th>Status</th>
+              <th>Commit</th><th>Pusher</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="recent-deploys-body">
+            {% for d in recent %}
+              <tr>
+                <td class="small-muted">{{ d.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                <td><b>#{{ d.build_number or '—' }}</b></td>
+                <td><code>{{ d.repo_name }}</code> / <code>{{ d.branch_name }}</code></td>
+                <td>{{ status_badge(d.status) }}</td>
+                <td>{% if d.commit_sha %}<code>{{ d.commit_sha[:7] }}</code>{% endif %}</td>
+                <td class="small-muted">{{ d.pusher or '—' }}</td>
+                <td class="text-nowrap">
+                  <a class="btn btn-link btn-sm p-0 me-2" href="{{ url_for('admin.deploy_detail', deploy_id=d.id) }}" title="View build details"><i class="bi bi-eye"></i></a>
+                  {% if d.branch_id %}
+                    <a class="btn btn-link btn-sm p-0 text-warning" href="{{ url_for('admin.branch_edit', branch_id=d.branch_id) }}" title="Edit branch configuration"><i class="bi bi-pencil"></i></a>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endif %}
+
+<script>
+(function () {
+  const REFRESH_MS = 15000;
+  const fmtTime = (iso) => {
+    const d = new Date(iso);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  };
+  const statusBadge = (s) => {
+    if (s === 'success')  return '<span class="badge badge-status-success">success</span>';
+    if (s === 'failed')   return '<span class="badge badge-status-failed">failed</span>';
+    if (s === 'awaiting') return '<span class="badge bg-warning text-dark">awaiting</span>';
+    return '<span class="badge badge-status-pending">pending</span>';
+  };
+  function refresh() {
+    fetch('{{ url_for("admin.dashboard_data") }}', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return;
+        for (const [k, v] of Object.entries(data.metrics)) {
+          document.querySelectorAll(`[data-metric="${k}"]`).forEach(el => { el.textContent = v; });
+        }
+        const tbody = document.getElementById('recent-deploys-body');
+        if (tbody && Array.isArray(data.recent)) {
+          tbody.innerHTML = data.recent.map(d => `
+            <tr>
+              <td class="small-muted">${fmtTime(d.started_at)}</td>
+              <td><b>#${d.build_number ?? '—'}</b></td>
+              <td><code>${d.repo_name}</code> / <code>${d.branch_name}</code></td>
+              <td>${statusBadge(d.status)}</td>
+              <td>${d.commit_sha ? `<code>${d.commit_sha}</code>` : ''}</td>
+              <td class="small-muted">${d.pusher || '—'}</td>
+              <td class="text-nowrap">
+                <a class="btn btn-link btn-sm p-0 me-2" href="${d.url}" title="View build details"><i class="bi bi-eye"></i></a>
+                ${d.edit_url ? `<a class="btn btn-link btn-sm p-0 text-warning" href="${d.edit_url}" title="Edit branch"><i class="bi bi-pencil"></i></a>` : ''}
+              </td>
+            </tr>`).join('');
+        }
+      })
+      .catch(() => { /* swallow, try again next tick */ });
+  }
+  // Don't poll if the tab isn't visible; resume when it comes back.
+  let timer = setInterval(refresh, REFRESH_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearInterval(timer); }
+    else { refresh(); timer = setInterval(refresh, REFRESH_MS); }
+  });
+})();
+</script>
+{% endblock %}

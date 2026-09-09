@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Enable 2FA · {{ branding.name }}{% endblock %}
+{% block content %}
+<h3 class="mb-1">Enable two-factor authentication</h3>
+<p class="small-muted mb-4">After enabling, you'll be asked for a 6-digit code from your authenticator app every time you sign in.</p>
+
+<div class="row">
+  <div class="col-lg-5 mb-3">
+    <div class="card">
+      <div class="card-body">
+        <h6 class="card-title">Step 1 — Scan</h6>
+        <p class="small-muted">Open Google Authenticator, 1Password, Authy, or any TOTP app and scan this code:</p>
+        <div class="text-center p-3" style="background:#fff; border-radius:12px;">
+          <img src="{{ qr_data_url }}" alt="2FA QR" style="max-width:220px;">
+        </div>
+        <p class="small-muted mt-3 mb-1">Or enter this secret manually:</p>
+        <div class="input-group input-group-sm">
+          <input class="form-control mono" value="{{ secret }}" readonly>
+          <button class="btn btn-outline-secondary" type="button"
+                  onclick="navigator.clipboard.writeText('{{ secret }}'); this.innerHTML='Copied!';">
+            <i class="bi bi-clipboard"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <form method="post" class="card">
+      <div class="card-body">
+        <h6 class="card-title">Step 2 — Verify</h6>
+        <p class="small-muted">Enter the 6-digit code your app shows to confirm it's set up correctly.</p>
+        <div class="mb-3">
+          <input class="form-control mono" type="text" name="code" required autofocus
+                 inputmode="numeric" pattern="[0-9]*" maxlength="7"
+                 placeholder="123 456" style="font-size:22px;text-align:center;letter-spacing:.25em;">
+        </div>
+        <button class="btn btn-primary" type="submit">Enable 2FA</button>
+        <a class="btn btn-link" href="{{ url_for('admin.dashboard') }}">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

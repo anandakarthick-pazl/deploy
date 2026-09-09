@@ -1,0 +1,610 @@
+{% extends "base.html" %}
+{% block title %}Files · {{ branding.name }}{% endblock %}
+{% block content %}
+{% if current_server %}
+  <div class="alert alert-warning d-flex align-items-center mb-3">
+    <i class="bi bi-broadcast me-2" style="font-size:1.2rem;color:#f59e0b;"></i>
+    <div>
+      Browsing files on remote <b>{{ current_server.name }}</b>
+      <code class="ms-1">{{ current_server.label }}</code>
+      via SFTP.
+    </div>
+  </div>
+{% endif %}
+
+<style>
+  .fm-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .fm-path-input { font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+  .crumbs { font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+  .crumbs a { color: var(--accent); }
+  .crumbs span.sep { color: var(--text-soft); padding: 0 4px; }
+  .fm-table td { vertical-align: middle; }
+  .fm-table td.name a { color: var(--text); text-decoration: none; }
+  .fm-table td.name a:hover { color: var(--accent); }
+  .fm-table td.name i.bi { margin-right: 7px; color: var(--text-muted); }
+  .fm-table td.name .badge-sym { font-size: 9px; padding: 1px 6px; margin-left: 4px; }
+  .fm-editor textarea {
+    font-family: 'JetBrains Mono', monospace; font-size: 13px;
+    width: 100%; min-height: 60vh;
+    background: #0b1020; color: #d4d4d4; border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px; line-height: 1.5;
+    resize: vertical;
+  }
+  html[data-theme="dark"] .fm-editor textarea { background: #06091a; }
+  .quick-action {
+    display: inline-flex; align-items: center; gap: 4px; padding: 4px 9px;
+    background: var(--accent-soft); color: var(--accent); border-radius: 6px;
+    font-size: 12px; cursor: pointer; user-select: none;
+  }
+  .quick-action:hover { background: var(--accent); color: white; }
+</style>
+
+<div class="d-flex justify-content-between align-items-end mb-3">
+  <div>
+    <h3 class="mb-1">File manager</h3>
+    <div class="crumbs">
+      {% for label, full in crumbs %}
+        {% if not loop.last %}
+          <a href="{{ url_for('fm.index', path=full) }}">{{ label or '/' }}</a><span class="sep">/</span>
+        {% else %}
+          <span class="text-muted">{{ label or '/' }}</span>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  <form method="get" action="{{ url_for('fm.index') }}" class="d-flex gap-1">
+    <input class="form-control form-control-sm fm-path-input" name="path"
+           value="{{ path }}" placeholder="Type a path…" style="min-width: 320px;">
+    <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-arrow-right"></i></button>
+  </form>
+</div>
+
+{# Quick shortcuts to common paths #}
+<div class="mb-3">
+  {% set quick = [
+    ("Projects",    default_root),
+    ("Deploy app",  "/srv/code/Source_Code/packworx/deploy"),
+    ("Nginx vhosts","/etc/nginx/sites-available"),
+    ("Systemd",     "/etc/systemd/system"),
+    ("Logs",        "/var/log"),
+    ("Root",        "/"),
+  ] %}
+  {% for label, url_path in quick %}
+    <a class="quick-action me-1 mb-1" href="{{ url_for('fm.index', path=url_path) }}">
+      <i class="bi bi-bookmark"></i> {{ label }}
+    </a>
+  {% endfor %}
+</div>
+
+{# ====================== LIST MODE ====================== #}
+{% if mode == "list" %}
+  <div class="card mb-3">
+    <div class="card-body py-2">
+      <div class="fm-toolbar">
+        {% if parent %}
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('fm.index', path=parent) }}">
+            <i class="bi bi-arrow-up"></i> Parent
+          </a>
+        {% endif %}
+
+        <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#mkdir-form">
+          <i class="bi bi-folder-plus"></i> New folder
+        </button>
+        <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#upload-form">
+          <i class="bi bi-cloud-upload"></i> Upload
+        </button>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('fm.zip_download', path=path) }}"
+           title="Download the current folder as a .zip (skips node_modules / .git / venv / dist / build)">
+          <i class="bi bi-file-zip"></i> Download this folder as zip
+        </a>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('fm.search', path=path) }}"
+           title="Recursive grep in this folder">
+          <i class="bi bi-search"></i> Find in files
+        </a>
+
+        <div class="ms-auto small-muted">{{ entries|length }} item(s)</div>
+      </div>
+
+      <div class="collapse mt-2" id="mkdir-form">
+        <form method="post" action="{{ url_for('fm.mkdir') }}" class="d-flex gap-1">
+          <input type="hidden" name="parent" value="{{ path }}">
+          <input class="form-control form-control-sm" name="name" placeholder="new-folder-name" required>
+          <button class="btn btn-sm btn-primary"><i class="bi bi-folder-plus"></i> Create</button>
+        </form>
+      </div>
+      <div class="collapse mt-2" id="upload-form">
+        <form method="post" action="{{ url_for('fm.upload') }}" enctype="multipart/form-data" class="d-flex gap-1 align-items-center">
+          <input type="hidden" name="parent" value="{{ path }}">
+          <input class="form-control form-control-sm" type="file" name="file" required>
+          <button class="btn btn-sm btn-primary"><i class="bi bi-cloud-upload"></i> Upload here</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-0">
+      <table class="table table-sm align-middle fm-table mb-0">
+        <thead>
+          <tr><th class="ps-3">Name</th><th>Size</th><th>Modified</th><th>Mode</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for e in entries %}
+            <tr>
+              <td class="name ps-3">
+                <i class="bi bi-{{ e.icon }}{% if e.is_dir %}{% else %} text-muted{% endif %}"></i>
+                {% if e.is_dir %}
+                  <a href="{{ url_for('fm.index', path=e.path) }}"><b>{{ e.name }}</b></a>
+                {% else %}
+                  <a href="{{ url_for('fm.index', path=e.path) }}">{{ e.name }}</a>
+                {% endif %}
+                {% if e.is_link %}<span class="badge bg-light text-dark border badge-sym">link</span>{% endif %}
+              </td>
+              <td class="small-muted">{{ e.size_h }}</td>
+              <td class="small-muted">{{ e.mtime }}</td>
+              <td class="mono small-muted">{{ e.mode }}</td>
+              <td class="text-end pe-3 text-nowrap">
+                {% if e.is_dir %}
+                  <a class="btn btn-link btn-sm p-0 me-2" title="Download as zip"
+                     href="{{ url_for('fm.zip_download', path=e.path) }}"><i class="bi bi-file-zip"></i></a>
+                {% else %}
+                  <a class="btn btn-link btn-sm p-0 me-2" title="Download"
+                     href="{{ url_for('fm.download', path=e.path) }}"><i class="bi bi-download"></i></a>
+                {% endif %}
+                <button class="btn btn-link btn-sm p-0 me-2 text-info chmod-btn"
+                        data-path="{{ e.path }}" data-name="{{ e.name }}"
+                        data-mode="{{ e.mode[2:] if e.mode.startswith('0o') else e.mode }}"
+                        data-is-dir="{{ '1' if e.is_dir else '0' }}"
+                        title="Change permissions">
+                  <i class="bi bi-shield-lock"></i>
+                </button>
+                <button class="btn btn-link btn-sm p-0 me-2 text-warning rename-btn"
+                        data-path="{{ e.path }}" data-name="{{ e.name }}" title="Rename">
+                  <i class="bi bi-pencil"></i>
+                </button>
+                <form method="post" action="{{ url_for('fm.delete') }}" class="d-inline"
+                      data-confirm="Delete {{ e.name }}{% if e.is_dir %} and everything inside{% endif %}?\n\nPath: {{ e.path }}"
+                      data-confirm-ok="Delete">
+                  <input type="hidden" name="path" value="{{ e.path }}">
+                  <button class="btn btn-link btn-sm p-0 text-danger" type="submit" title="Delete">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="text-center text-muted py-4">Empty directory.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Rename modal -->
+  <div class="modal fade" id="renameModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <form method="post" action="{{ url_for('fm.rename') }}" class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Rename</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="path" id="rename-path">
+          <label class="form-label small text-muted">New name</label>
+          <input class="form-control mono" name="new_name" id="rename-name" required>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn btn-primary" type="submit">Rename</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <script>
+    document.querySelectorAll('.rename-btn').forEach(b => b.addEventListener('click', () => {
+      document.getElementById('rename-path').value = b.dataset.path;
+      document.getElementById('rename-name').value = b.dataset.name;
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('renameModal')).show();
+    }));
+  </script>
+
+  <!-- chmod modal -->
+  <div class="modal fade" id="chmodModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <form method="post" action="{{ url_for('fm.chmod') }}" class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Permissions <code id="chmod-name" class="ms-1"></code></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="path" id="chmod-path">
+
+          <table class="table table-sm align-middle mb-3">
+            <thead><tr>
+              <th></th>
+              <th class="text-center"><span class="badge bg-light text-dark">read</span></th>
+              <th class="text-center"><span class="badge bg-light text-dark">write</span></th>
+              <th class="text-center"><span class="badge bg-light text-dark">execute</span></th>
+            </tr></thead>
+            <tbody>
+              {% for who, owner_label in [('owner','Owner'), ('group','Group'), ('other','Other')] %}
+                <tr>
+                  <td>{{ owner_label }}</td>
+                  {% for bit in ['r','w','x'] %}
+                    <td class="text-center">
+                      <input type="checkbox" class="form-check-input chmod-bit"
+                             data-who="{{ who }}" data-bit="{{ bit }}">
+                    </td>
+                  {% endfor %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+
+          <div class="row align-items-center">
+            <div class="col-md-6">
+              <label class="form-label small text-muted mb-1">Octal mode</label>
+              <input class="form-control mono" name="mode" id="chmod-octal" value="755" maxlength="4" required>
+              <div class="form-text">Edit either the checkboxes or this field — they stay in sync.</div>
+            </div>
+            <div class="col-md-6 small-muted" id="chmod-preview">
+              Effective: <code id="chmod-symbolic">-rwxr-xr-x</code>
+            </div>
+          </div>
+
+          <div class="form-check mt-3" id="chmod-recursive-row" style="display:none;">
+            <input class="form-check-input" type="checkbox" name="recursive" id="chmod-recursive">
+            <label class="form-check-label" for="chmod-recursive">
+              Apply recursively to all files and folders inside
+            </label>
+          </div>
+
+          <div class="alert alert-warning small mt-3 mb-0">
+            <i class="bi bi-exclamation-triangle"></i>
+            Changing permissions can lock you out of files. Common modes: <code>755</code> (folders / executables), <code>644</code> (regular files), <code>600</code> (secrets).
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn btn-primary" type="submit"><i class="bi bi-shield-check"></i> Apply</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const modalEl = document.getElementById('chmodModal');
+      const octalEl = document.getElementById('chmod-octal');
+      const symEl   = document.getElementById('chmod-symbolic');
+      const recRow  = document.getElementById('chmod-recursive-row');
+
+      const order = ['owner', 'group', 'other'];
+      const bits  = { r: 4, w: 2, x: 1 };
+
+      function checksToMode() {
+        let triplets = [0, 0, 0];
+        document.querySelectorAll('.chmod-bit').forEach(cb => {
+          if (!cb.checked) return;
+          const idx = order.indexOf(cb.dataset.who);
+          triplets[idx] += bits[cb.dataset.bit];
+        });
+        return triplets.join('');
+      }
+      function modeToChecks(modeStr) {
+        const m = modeStr.padStart(3, '0').slice(-3); // last 3 octal digits
+        order.forEach((who, i) => {
+          const digit = parseInt(m[i] || '0', 8);
+          document.querySelectorAll(`.chmod-bit[data-who="${who}"]`).forEach(cb => {
+            const b = bits[cb.dataset.bit];
+            cb.checked = (digit & b) === b;
+          });
+        });
+      }
+      function symbolic(modeStr) {
+        const m = modeStr.padStart(3, '0').slice(-3);
+        let s = '';
+        order.forEach((who, i) => {
+          const digit = parseInt(m[i] || '0', 8);
+          s += (digit & 4 ? 'r' : '-') + (digit & 2 ? 'w' : '-') + (digit & 1 ? 'x' : '-');
+        });
+        return s;
+      }
+
+      document.querySelectorAll('.chmod-bit').forEach(cb => cb.addEventListener('change', () => {
+        const m = checksToMode(); octalEl.value = m; symEl.textContent = symbolic(m);
+      }));
+      octalEl.addEventListener('input', () => {
+        modeToChecks(octalEl.value); symEl.textContent = symbolic(octalEl.value);
+      });
+
+      document.querySelectorAll('.chmod-btn').forEach(b => b.addEventListener('click', () => {
+        document.getElementById('chmod-path').value = b.dataset.path;
+        document.getElementById('chmod-name').textContent = b.dataset.name;
+        recRow.style.display = b.dataset.isDir === '1' ? '' : 'none';
+        const mode = (b.dataset.mode || '755').slice(-3);
+        octalEl.value = mode;
+        modeToChecks(mode);
+        symEl.textContent = symbolic(mode);
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+      }));
+    })();
+  </script>
+
+{# ====================== EDIT MODE ====================== #}
+{% elif mode == "edit" %}
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/theme/material-darker.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/fold/foldgutter.min.css">
+  <style>
+    .CodeMirror { height: 65vh; font-size: 13px; font-family: 'JetBrains Mono', monospace;
+                  border: 1px solid var(--border); border-radius: var(--radius); }
+    .CodeMirror-gutters { border-right: 1px solid #2c2c2c; }
+  </style>
+
+  <div class="card mb-3">
+    <div class="card-body py-2">
+      <div class="fm-toolbar">
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('fm.index', path=parent) }}">
+          <i class="bi bi-arrow-up"></i> Back
+        </a>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('fm.download', path=path) }}">
+          <i class="bi bi-download"></i> Download
+        </a>
+        <button class="btn btn-sm btn-outline-info chmod-btn"
+                data-path="{{ path }}" data-name="{{ path.rsplit('/',1)[-1] }}"
+                data-mode="755" data-is-dir="0">
+          <i class="bi bi-shield-lock"></i> Permissions
+        </button>
+        <form method="post" action="{{ url_for('fm.delete') }}" class="d-inline"
+              data-confirm="Delete this file?\n\n{{ path }}" data-confirm-ok="Delete">
+          <input type="hidden" name="path" value="{{ path }}">
+          <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i> Delete</button>
+        </form>
+        <div class="ms-auto small-muted">
+          <span id="cm-info">—</span> · {{ size_h }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <form method="post" action="{{ url_for('fm.save') }}" class="fm-editor card" id="editor-form">
+    <input type="hidden" name="path" value="{{ path }}">
+    <div class="card-body">
+      <textarea name="content" id="editor" spellcheck="false">{{ content }}</textarea>
+      <div class="d-flex justify-content-between align-items-center mt-3">
+        <div class="small-muted">UTF-8. Press <kbd>Ctrl</kbd>+<kbd>S</kbd> to save. Lines: <span id="line-count">0</span> · Chars: <span id="char-count">0</span></div>
+        <div>
+          <a class="btn btn-light btn-sm" href="{{ url_for('fm.index', path=parent) }}">Cancel</a>
+          <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-save"></i> Save</button>
+        </div>
+      </div>
+    </div>
+  </form>
+
+  {# Same chmod modal as the list view (so the Permissions button here works) #}
+  <div class="modal fade" id="chmodModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <form method="post" action="{{ url_for('fm.chmod') }}" class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Permissions <code id="chmod-name" class="ms-1"></code></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="path" id="chmod-path">
+          <table class="table table-sm align-middle mb-3">
+            <thead><tr>
+              <th></th>
+              <th class="text-center"><span class="badge bg-light text-dark">read</span></th>
+              <th class="text-center"><span class="badge bg-light text-dark">write</span></th>
+              <th class="text-center"><span class="badge bg-light text-dark">execute</span></th>
+            </tr></thead>
+            <tbody>
+              {% for who, owner_label in [('owner','Owner'), ('group','Group'), ('other','Other')] %}
+                <tr><td>{{ owner_label }}</td>
+                  {% for bit in ['r','w','x'] %}
+                    <td class="text-center">
+                      <input type="checkbox" class="form-check-input chmod-bit"
+                             data-who="{{ who }}" data-bit="{{ bit }}">
+                    </td>
+                  {% endfor %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <div class="row align-items-center">
+            <div class="col-md-6">
+              <label class="form-label small text-muted mb-1">Octal mode</label>
+              <input class="form-control mono" name="mode" id="chmod-octal" value="644" maxlength="4" required>
+            </div>
+            <div class="col-md-6 small-muted">
+              Effective: <code id="chmod-symbolic">-rw-r--r--</code>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn btn-primary" type="submit"><i class="bi bi-shield-check"></i> Apply</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/matchbrackets.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/closebrackets.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/fold/foldcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/fold/foldgutter.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/fold/brace-fold.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/fold/indent-fold.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/fold/xml-fold.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/xml/xml.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/css/css.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/shell/shell.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/yaml/yaml.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/markdown/markdown.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/sql/sql.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/nginx/nginx.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/dockerfile/dockerfile.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/properties/properties.min.js"></script>
+
+  <script>
+  (function () {
+    const path = {{ path|tojson }};
+    const ext  = (path.split('.').pop() || '').toLowerCase();
+    const fname = path.split('/').pop().toLowerCase();
+
+    function pickMode() {
+      if (['js','jsx','mjs','cjs'].includes(ext)) return {name:'javascript', mode:'jsx'};
+      if (['ts','tsx'].includes(ext))             return {name:'javascript', mode:'typescript', typescript:true};
+      if (['py'].includes(ext))                   return 'python';
+      if (['html','htm','vue','svelte'].includes(ext))  return 'htmlmixed';
+      if (['xml','svg'].includes(ext))            return 'xml';
+      if (['css','scss','less'].includes(ext))    return 'css';
+      if (['sh','bash','zsh'].includes(ext) || fname === 'dockerfile') return 'shell';
+      if (fname.startsWith('dockerfile'))         return 'dockerfile';
+      if (['yml','yaml'].includes(ext))           return 'yaml';
+      if (['md','markdown'].includes(ext))        return 'markdown';
+      if (['sql'].includes(ext))                  return 'sql';
+      if (fname.startsWith('nginx') || ext === 'conf' || path.indexOf('nginx') !== -1) return 'nginx';
+      if (['ini','toml','env','properties'].includes(ext) || fname === '.env') return 'properties';
+      if (['json'].includes(ext))                 return {name:'javascript', json:true};
+      return 'text/plain';
+    }
+
+    const useDark = document.documentElement.dataset.theme === 'dark'
+                 || (document.documentElement.dataset.theme === 'auto'
+                     && window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+    const cm = CodeMirror.fromTextArea(document.getElementById('editor'), {
+      mode: pickMode(),
+      theme: useDark ? 'material-darker' : 'default',
+      lineNumbers: true,
+      indentUnit: 2,
+      tabSize: 2,
+      matchBrackets: true,
+      autoCloseBrackets: true,
+      foldGutter: true,
+      gutters: ['CodeMirror-linenumbers','CodeMirror-foldgutter'],
+      viewportMargin: Infinity,   // render all so saves are simple
+      lineWrapping: false,
+    });
+
+    function refreshStats() {
+      const v = cm.getValue();
+      document.getElementById('line-count').textContent = cm.lineCount();
+      document.getElementById('char-count').textContent = v.length;
+      const m = cm.getMode();
+      document.getElementById('cm-info').textContent = (m.name || m) + (cm.somethingSelected() ? ' · sel ' + cm.getSelection().length : '');
+    }
+    cm.on('change', refreshStats);
+    cm.on('cursorActivity', refreshStats);
+    refreshStats();
+
+    // Save on Ctrl/Cmd+S — sync CodeMirror back into the underlying textarea first.
+    document.addEventListener('keydown', function (e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        cm.save();
+        document.getElementById('editor-form').submit();
+      }
+    });
+    document.getElementById('editor-form').addEventListener('submit', () => cm.save());
+
+    // === chmod modal wiring (mirrors the list-view script) ===
+    const order = ['owner','group','other'];
+    const bits  = { r: 4, w: 2, x: 1 };
+    function checksToMode() {
+      let t = [0,0,0];
+      document.querySelectorAll('.chmod-bit').forEach(cb => {
+        if (!cb.checked) return;
+        t[order.indexOf(cb.dataset.who)] += bits[cb.dataset.bit];
+      });
+      return t.join('');
+    }
+    function modeToChecks(s) {
+      const m = s.padStart(3, '0').slice(-3);
+      order.forEach((who, i) => {
+        const d = parseInt(m[i] || '0', 8);
+        document.querySelectorAll(`.chmod-bit[data-who="${who}"]`).forEach(cb => {
+          cb.checked = (d & bits[cb.dataset.bit]) === bits[cb.dataset.bit];
+        });
+      });
+    }
+    function symbolic(s) {
+      const m = s.padStart(3, '0').slice(-3);
+      let out = '';
+      order.forEach((who, i) => {
+        const d = parseInt(m[i] || '0', 8);
+        out += (d & 4 ? 'r' : '-') + (d & 2 ? 'w' : '-') + (d & 1 ? 'x' : '-');
+      });
+      return out;
+    }
+    document.querySelectorAll('.chmod-bit').forEach(cb => cb.addEventListener('change', () => {
+      const m = checksToMode();
+      document.getElementById('chmod-octal').value = m;
+      document.getElementById('chmod-symbolic').textContent = symbolic(m);
+    }));
+    document.getElementById('chmod-octal').addEventListener('input', e => {
+      modeToChecks(e.target.value);
+      document.getElementById('chmod-symbolic').textContent = symbolic(e.target.value);
+    });
+    document.querySelectorAll('.chmod-btn').forEach(b => b.addEventListener('click', () => {
+      document.getElementById('chmod-path').value = b.dataset.path;
+      document.getElementById('chmod-name').textContent = b.dataset.name;
+      const m = (b.dataset.mode || '644').slice(-3);
+      document.getElementById('chmod-octal').value = m;
+      modeToChecks(m);
+      document.getElementById('chmod-symbolic').textContent = symbolic(m);
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('chmodModal')).show();
+    }));
+  })();
+  </script>
+
+{# ====================== BINARY ====================== #}
+{% elif mode == "binary" %}
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title"><i class="bi bi-file-earmark-binary"></i> Binary file</h5>
+      <p class="small-muted">This isn't a text file ({{ mime }}, {{ size_h }}) — the editor would corrupt it. Download or delete instead.</p>
+      <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('fm.index', path=parent) }}"><i class="bi bi-arrow-up"></i> Back</a>
+        <a class="btn btn-outline-primary btn-sm" href="{{ url_for('fm.download', path=path) }}"><i class="bi bi-download"></i> Download</a>
+        {% if mime.startswith('image/') %}
+          <a class="btn btn-outline-secondary btn-sm" target="_blank" href="{{ url_for('fm.preview', path=path) }}"><i class="bi bi-eye"></i> Preview</a>
+        {% endif %}
+        <form method="post" action="{{ url_for('fm.delete') }}" class="d-inline"
+              data-confirm="Delete this file?\n\n{{ path }}" data-confirm-ok="Delete">
+          <input type="hidden" name="path" value="{{ path }}">
+          <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-trash"></i> Delete</button>
+        </form>
+      </div>
+      {% if mime.startswith('image/') %}
+        <div class="mt-3 text-center" style="background:#f5f7fb;padding:20px;border-radius:var(--radius);">
+          <img src="{{ url_for('fm.preview', path=path) }}" alt="" style="max-width:100%;max-height:60vh;">
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+{# ====================== TOO BIG ====================== #}
+{% elif mode == "too_big" %}
+  <div class="card">
+    <div class="card-body">
+      <h5 class="card-title"><i class="bi bi-exclamation-triangle text-warning"></i> File too large to edit</h5>
+      <p class="small-muted">{{ path }} is {{ size_h }} — beyond the 5 MB editor limit. Download or delete instead.</p>
+      <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('fm.index', path=parent) }}"><i class="bi bi-arrow-up"></i> Back</a>
+        <a class="btn btn-outline-primary btn-sm" href="{{ url_for('fm.download', path=path) }}"><i class="bi bi-download"></i> Download</a>
+        <form method="post" action="{{ url_for('fm.delete') }}" class="d-inline"
+              data-confirm="Delete this file?\n\n{{ path }}" data-confirm-ok="Delete">
+          <input type="hidden" name="path" value="{{ path }}">
+          <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-trash"></i> Delete</button>
+        </form>
+      </div>
+    </div>
+  </div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,402 @@
+{% extends "base.html" %}
+{% block title %}Server monitor · {{ branding.name }}{% endblock %}
+{% block content %}
+
+<style>
+  .gauge-card { border-radius: var(--radius-xl); }
+  .gauge-card .pct  { font-size: 36px; font-weight: 700; letter-spacing: -.02em; line-height: 1; }
+  .gauge-card .lbl  { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+                      color: var(--text-soft); font-weight: 600; }
+  .gauge-card .sub  { font-size: 12.5px; color: var(--text-muted); margin-top: 4px; }
+  .gauge-card.cpu  .pct { color: var(--accent); }
+  .gauge-card.mem  .pct { color: #f59e0b; }
+  .gauge-card.disk .pct { color: #ef4444; }
+  .gauge-card.net  .pct { color: #10b981; }
+  .progress { height: 6px; border-radius: 99px; background: var(--accent-soft); }
+  .progress-bar { background: var(--accent); }
+  .progress-bar.warn   { background: #f59e0b; }
+  .progress-bar.danger { background: #ef4444; }
+  .core-bar    { height: 6px; border-radius: 3px; background: var(--accent-soft); position: relative; }
+  .core-bar > div { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent);
+                    border-radius: 3px; transition: width .3s ease; }
+  .proc-table td.pct  { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .meta-strip { display: flex; flex-wrap: wrap; gap: 18px; font-size: 12.5px; color: var(--text-muted); }
+  .meta-strip b { color: var(--text); font-weight: 600; }
+  .live-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: #10b981; margin-right: 6px; animation: pulse 1.6s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+</style>
+
+{% if snap.remote %}
+  <div class="alert alert-warning d-flex align-items-center mb-3">
+    <i class="bi bi-broadcast me-2" style="font-size:1.2rem;color:#f59e0b;"></i>
+    <div>
+      Showing live stats from remote <b>{{ snap.hostname }}</b>
+      <code class="ms-1">{{ snap.remote_label }}</code>.
+      {% if snap.remote_error %}<br><span class="text-danger">SSH error — falling back to local: {{ snap.remote_error }}</span>{% endif %}
+    </div>
+  </div>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-end mb-3">
+  <div>
+    <h3 class="mb-1">Server monitor</h3>
+    <div class="meta-strip">
+      <span><i class="bi bi-hdd-rack"></i> <b>{{ snap.hostname }}</b>
+        {% if snap.remote %}<span class="badge bg-warning text-dark ms-1">remote</span>{% endif %}
+      </span>
+      <span><i class="bi bi-power"></i> Uptime <b id="uptime">{{ snap.uptime.human }}</b> <span class="small-muted">(since {{ snap.uptime.boot_at }})</span></span>
+      <span><i class="bi bi-cpu"></i> {{ snap.cpu.cores_physical }} core(s) / {{ snap.cpu.cores_logical }} thread(s)</span>
+      <span>Load: <b id="load">{{ snap.cpu.load_1m }} · {{ snap.cpu.load_5m }} · {{ snap.cpu.load_15m }}</b></span>
+    </div>
+  </div>
+  <div class="text-end">
+    <div class="small-muted"><span class="live-dot"></span> Live · refreshes every 3 s</div>
+    <div class="small-muted" id="last-ts">{{ snap.ts }}</div>
+  </div>
+</div>
+
+<!-- ============== top gauge cards ============== -->
+<div class="row g-3 mb-4">
+  <div class="col-md-6 col-lg-3">
+    <div class="metric-card gauge-card cpu">
+      <i class="bi bi-cpu-fill"></i>
+      <div class="lbl">CPU</div>
+      <div class="pct"><span id="cpu-pct">{{ snap.cpu.percent }}</span>%</div>
+      <div class="progress mt-2"><div class="progress-bar" id="cpu-bar" style="width:{{ snap.cpu.percent }}%;"></div></div>
+      <div class="sub" id="cpu-sub">{{ snap.cpu.cores_logical }} threads{% if snap.cpu.freq_mhz %} · {{ snap.cpu.freq_mhz }} MHz{% endif %}</div>
+    </div>
+  </div>
+  <div class="col-md-6 col-lg-3">
+    <div class="metric-card gauge-card mem">
+      <i class="bi bi-memory"></i>
+      <div class="lbl">Memory</div>
+      <div class="pct"><span id="mem-pct">{{ snap.memory.percent }}</span>%</div>
+      <div class="progress mt-2"><div class="progress-bar" id="mem-bar" style="width:{{ snap.memory.percent }}%;background:#f59e0b;"></div></div>
+      <div class="sub"><span id="mem-used">{{ snap.memory.used_human }}</span> / <span id="mem-total">{{ snap.memory.total_human }}</span> · <span id="mem-free">{{ snap.memory.available_human }}</span> free</div>
+    </div>
+  </div>
+  <div class="col-md-6 col-lg-3">
+    <div class="metric-card gauge-card disk">
+      <i class="bi bi-hdd"></i>
+      <div class="lbl">Root disk</div>
+      {% set root = (snap.disks | selectattr('mount', 'equalto', '/') | first) or snap.disks[0] %}
+      <div class="pct"><span id="disk-pct">{{ root.percent }}</span>%</div>
+      <div class="progress mt-2"><div class="progress-bar" id="disk-bar" style="width:{{ root.percent }}%;background:#ef4444;"></div></div>
+      <div class="sub"><span id="disk-used">{{ root.used_human }}</span> / <span id="disk-total">{{ root.total_human }}</span> · <span id="disk-free">{{ root.free_human }}</span> free</div>
+    </div>
+  </div>
+  <div class="col-md-6 col-lg-3">
+    <div class="metric-card gauge-card net">
+      <i class="bi bi-arrow-down-up"></i>
+      <div class="lbl">Network (total)</div>
+      <div class="pct" style="font-size:24px;">
+        <i class="bi bi-arrow-down-short" style="color:#10b981"></i><span id="net-recv">{{ snap.network.recv_human }}</span>
+      </div>
+      <div class="pct" style="font-size:18px;">
+        <i class="bi bi-arrow-up-short" style="color:#3b82f6"></i><span id="net-sent">{{ snap.network.sent_human }}</span>
+      </div>
+      <div class="sub">since boot</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============== history chart ============== -->
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h6 class="card-title mb-0">History</h6>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Range">
+        {% for r in ['1h','6h','24h','7d'] %}
+          <button type="button" class="btn btn-outline-secondary range-btn {% if r == '6h' %}active{% endif %}"
+                  data-range="{{ r }}">{{ r }}</button>
+        {% endfor %}
+      </div>
+    </div>
+    <canvas id="historyChart" style="max-height:280px;"></canvas>
+    <div class="small-muted mt-2"><span id="hist-points">0</span> samples · one per minute</div>
+  </div>
+</div>
+
+<!-- ============== per-core CPU + disks ============== -->
+<div class="row g-3 mb-4">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-title mb-3">CPU per core</h6>
+        <div id="per-core">
+          {% for c in snap.cpu.per_core %}
+            <div class="d-flex align-items-center mb-2 gap-3">
+              <span class="small-muted" style="width:54px;">Core {{ loop.index0 }}</span>
+              <div class="core-bar flex-grow-1"><div style="width:{{ c }}%"></div></div>
+              <span class="small text-muted" style="width:42px;text-align:right;">{{ c }}%</span>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-title mb-3">Disk usage by mount</h6>
+        <div id="disks-list">
+          {% for d in snap.disks %}
+            <div class="mb-3">
+              <div class="d-flex justify-content-between">
+                <span><b>{{ d.mount }}</b> <span class="small-muted">{{ d.device }} · {{ d.fstype }}</span></span>
+                <span class="small-muted">{{ d.used_human }} / {{ d.total_human }} ({{ d.percent }}%)</span>
+              </div>
+              <div class="progress mt-1">
+                <div class="progress-bar {% if d.percent >= 90 %}danger{% elif d.percent >= 75 %}warn{% endif %}"
+                     style="width:{{ d.percent }}%;{% if d.percent < 75 %}background:#10b981;{% endif %}"></div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============== process table ============== -->
+<div class="card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h6 class="card-title mb-0">Top processes <span class="text-muted small">(sorted by CPU)</span></h6>
+      <div class="small-muted">Click 🗙 to send <kbd>SIGTERM</kbd>. Killing the gunicorn worker that's serving this page is blocked.</div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle proc-table mb-0">
+        <thead>
+          <tr>
+            <th>PID</th><th>Name</th><th>User</th>
+            <th class="text-end">CPU %</th><th class="text-end">Memory</th>
+            <th>Started</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="proc-tbody">
+          {% for p in snap.processes %}
+            <tr>
+              <td class="mono">{{ p.pid }}</td>
+              <td>{{ p.name }}{% if p.is_self %} <span class="badge bg-light text-dark border ms-1">this server</span>{% endif %}</td>
+              <td class="small-muted">{{ p.user }}</td>
+              <td class="pct text-end">{{ p.cpu_pct }}</td>
+              <td class="text-end small-muted">{{ p.mem_mb }} MB</td>
+              <td class="small-muted">{{ p.started_at }}</td>
+              <td class="text-end">
+                {% if not p.is_self %}
+                  <button class="btn btn-link btn-sm p-0 text-danger kill-btn"
+                          data-pid="{{ p.pid }}" data-name="{{ p.name }}" title="Send SIGTERM">
+                    <i class="bi bi-x-circle"></i>
+                  </button>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const REFRESH_MS = 3000;
+
+  function setBar(id, pct, color) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.width = pct + '%';
+    if (color) el.style.background = color;
+  }
+
+  function renderPerCore(perCore) {
+    const wrap = document.getElementById('per-core');
+    wrap.innerHTML = perCore.map((c, i) => `
+      <div class="d-flex align-items-center mb-2 gap-3">
+        <span class="small-muted" style="width:54px;">Core ${i}</span>
+        <div class="core-bar flex-grow-1"><div style="width:${c}%"></div></div>
+        <span class="small text-muted" style="width:42px;text-align:right;">${c}%</span>
+      </div>`).join('');
+  }
+
+  function renderDisks(disks) {
+    const wrap = document.getElementById('disks-list');
+    wrap.innerHTML = disks.map(d => {
+      const cls = d.percent >= 90 ? 'danger' : (d.percent >= 75 ? 'warn' : '');
+      const bg  = d.percent < 75 ? 'background:#10b981;' : '';
+      return `
+        <div class="mb-3">
+          <div class="d-flex justify-content-between">
+            <span><b>${d.mount}</b> <span class="small-muted">${d.device} · ${d.fstype}</span></span>
+            <span class="small-muted">${d.used_human} / ${d.total_human} (${d.percent}%)</span>
+          </div>
+          <div class="progress mt-1">
+            <div class="progress-bar ${cls}" style="width:${d.percent}%;${bg}"></div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function renderProcs(procs) {
+    const tbody = document.getElementById('proc-tbody');
+    tbody.innerHTML = procs.map(p => `
+      <tr>
+        <td class="mono">${p.pid}</td>
+        <td>${p.name}${p.is_self ? ' <span class="badge bg-light text-dark border ms-1">this server</span>' : ''}</td>
+        <td class="small-muted">${p.user}</td>
+        <td class="pct text-end">${p.cpu_pct}</td>
+        <td class="text-end small-muted">${p.mem_mb} MB</td>
+        <td class="small-muted">${p.started_at}</td>
+        <td class="text-end">
+          ${p.is_self ? '' :
+            `<button class="btn btn-link btn-sm p-0 text-danger kill-btn"
+                     data-pid="${p.pid}" data-name="${p.name}" title="Send SIGTERM">
+               <i class="bi bi-x-circle"></i>
+             </button>`}
+        </td>
+      </tr>`).join('');
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch('{{ url_for("monitor.stats") }}', { credentials: 'same-origin' });
+      if (!r.ok) return;
+      const s = await r.json();
+      document.getElementById('cpu-pct').textContent = s.cpu.percent;
+      setBar('cpu-bar', s.cpu.percent);
+      document.getElementById('mem-pct').textContent = s.memory.percent;
+      setBar('mem-bar', s.memory.percent, '#f59e0b');
+      document.getElementById('mem-used').textContent   = s.memory.used_human;
+      document.getElementById('mem-total').textContent  = s.memory.total_human;
+      document.getElementById('mem-free').textContent   = s.memory.available_human;
+      if (s.disks.length) {
+        const root = s.disks.find(d => d.mount === '/') || s.disks[0];
+        document.getElementById('disk-pct').textContent  = root.percent;
+        setBar('disk-bar', root.percent, '#ef4444');
+        document.getElementById('disk-used').textContent  = root.used_human;
+        document.getElementById('disk-total').textContent = root.total_human;
+        document.getElementById('disk-free').textContent  = root.free_human;
+      }
+      document.getElementById('net-recv').textContent = s.network.recv_human;
+      document.getElementById('net-sent').textContent = s.network.sent_human;
+      document.getElementById('uptime').textContent = s.uptime.human;
+      document.getElementById('load').textContent = `${s.cpu.load_1m} · ${s.cpu.load_5m} · ${s.cpu.load_15m}`;
+      document.getElementById('last-ts').textContent = s.ts;
+      renderPerCore(s.cpu.per_core);
+      renderDisks(s.disks);
+      renderProcs(s.processes);
+    } catch (e) { /* ignore one-off failures */ }
+  }
+
+  // Kill button (event delegation so it works after refresh)
+  document.getElementById('proc-tbody').addEventListener('click', async function (e) {
+    const btn = e.target.closest('.kill-btn');
+    if (!btn) return;
+    const pid  = btn.dataset.pid;
+    const name = btn.dataset.name;
+    if (!confirm(`Send SIGTERM to PID ${pid} (${name})?\n\nMake sure this isn't a critical service.`)) return;
+    const fd = new FormData();
+    fd.append('pid', pid);
+    fd.append('signal', 'TERM');
+    try {
+      const r = await fetch('{{ url_for("monitor.kill") }}', {
+        method: 'POST', body: fd, credentials: 'same-origin',
+      });
+      const j = await r.json();
+      if (j.ok) {
+        btn.outerHTML = '<span class="text-success small">sent</span>';
+      } else {
+        alert('Could not kill: ' + (j.error || 'unknown error'));
+      }
+    } catch (err) {
+      alert('Request failed: ' + err);
+    }
+  });
+
+  let timer = setInterval(refresh, REFRESH_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearInterval(timer); }
+    else { refresh(); timer = setInterval(refresh, REFRESH_MS); }
+  });
+})();
+</script>
+
+<!-- ============== history chart ============== -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  const ctx = document.getElementById('historyChart').getContext('2d');
+  const dark = document.documentElement.dataset.theme === 'dark' ||
+               (document.documentElement.dataset.theme === 'auto' &&
+                window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const gridColor = dark ? 'rgba(255,255,255,.06)' : 'rgba(15,23,42,.06)';
+  const textColor = dark ? '#94a3b8' : '#64748b';
+
+  const chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'CPU %',    data: [], borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,.10)',
+          fill: true, tension: 0.25, borderWidth: 2, pointRadius: 0 },
+        { label: 'Memory %', data: [], borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,.10)',
+          fill: false, tension: 0.25, borderWidth: 2, pointRadius: 0 },
+        { label: 'Disk %',   data: [], borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.10)',
+          fill: false, tension: 0.25, borderWidth: 2, pointRadius: 0 },
+      ],
+    },
+    options: {
+      responsive: true,
+      animation: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: textColor, boxWidth: 12, padding: 14 } },
+        tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${c.parsed.y?.toFixed(1)}%` } },
+      },
+      scales: {
+        x: {
+          ticks: { color: textColor, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
+          grid: { color: gridColor },
+        },
+        y: {
+          min: 0, max: 100,
+          ticks: { color: textColor, callback: v => v + '%' },
+          grid: { color: gridColor },
+        },
+      },
+    },
+  });
+
+  function fmtTime(iso) {
+    const d = new Date(iso);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  async function loadRange(range) {
+    try {
+      const r = await fetch('{{ url_for("monitor.history") }}?range=' + range);
+      const j = await r.json();
+      chart.data.labels = j.labels.map(fmtTime);
+      chart.data.datasets[0].data = j.cpu;
+      chart.data.datasets[1].data = j.mem;
+      chart.data.datasets[2].data = j.disk;
+      document.getElementById('hist-points').textContent = j.labels.length;
+      chart.update();
+    } catch (e) { /* ignore */ }
+  }
+
+  document.querySelectorAll('.range-btn').forEach(btn => btn.addEventListener('click', function () {
+    document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', b === btn));
+    loadRange(btn.dataset.range);
+  }));
+
+  loadRange('6h');
+  setInterval(() => loadRange(document.querySelector('.range-btn.active').dataset.range), 60_000);
+})();
+</script>
+{% endblock %}

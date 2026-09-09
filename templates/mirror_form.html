@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit mirror' if mode == 'edit' else 'Add mirror' }} · Packwork Deploy{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('admin.dashboard') }}">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{{ url_for('admin.repo_detail', repo_id=branch.repo.id) }}">{{ branch.repo.owner }}/{{ branch.repo.name }}</a></li>
+    <li class="breadcrumb-item active">{{ 'Edit mirror' if mode == 'edit' else 'Add mirror' }} · {{ branch.name }}</li>
+  </ol>
+</nav>
+
+<div class="row justify-content-center">
+  <div class="col-lg-9">
+    <h3>{{ 'Edit mirror' if mode == 'edit' else 'Push this branch to another repository' }}</h3>
+    <p class="small-muted">
+      Source: <code>{{ branch.repo.name }}/{{ branch.name }}</code> at <code>{{ branch.path }}</code>
+    </p>
+
+    <div class="alert alert-info small">
+      <i class="bi bi-info-circle"></i>
+      Each push copies the branch's <b>current working tree</b> to the target and commits it as a
+      single commit — the source repo's history is <b>not</b> mirrored. That is deliberate: excluded
+      files still exist in older commits, so pushing history would hand them to the target anyway.
+    </div>
+
+    <form method="post" class="card mt-3">
+      <div class="card-body">
+
+        <div class="row">
+          <div class="col-md-4 mb-3">
+            <label class="form-label">Mirror name</label>
+            <input class="form-control" name="name" required
+                   value="{{ form.get('name') or (mirror.name if mirror else '') }}"
+                   placeholder="azure">
+            <div class="form-text">Shown on the button, e.g. <code>azure</code>.</div>
+          </div>
+          <div class="col-md-8 mb-3">
+            <label class="form-label">Target branch</label>
+            <input class="form-control mono" name="target_branch"
+                   value="{{ form.get('target_branch') or (mirror.target_branch if mirror else 'main') }}">
+            <div class="form-text">Created on the remote if it doesn't exist yet.</div>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Remote URL</label>
+          <input class="form-control mono" name="remote_url" required
+                 value="{{ form.get('remote_url') or (mirror.remote_url if mirror else '') }}"
+                 placeholder="git@ssh.dev.azure.com:v3/packworkx/packworkx/packworkx_frontend">
+          <div class="form-text">
+            SSH form recommended, e.g.
+            <code>git@ssh.dev.azure.com:v3/packworkx/packworkx/packworkx_frontend</code>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">SSH key</label>
+          <div class="input-group">
+            <select class="form-select mono" name="ssh_key_path" id="ssh-key-select">
+              <option value="">(default — first key ssh finds)</option>
+              {% for k in ssh_keys %}
+                <option value="{{ k.path }}"
+                        {% if (mirror and mirror.ssh_key_path == k.path) or form.get('ssh_key_path') == k.path %}selected{% endif %}>
+                  {{ k.name }}{% if k.is_default %} — default{% endif %}{% if not k.pub %} (no public key on disk){% endif %}
+                </option>
+              {% endfor %}
+            </select>
+            <button class="btn btn-outline-secondary" type="button" id="gen-key-btn"
+                    title="Create a new key dedicated to this mirror">
+              <i class="bi bi-key"></i> New key
+            </button>
+          </div>
+          <div class="form-text">
+            A dedicated key per target is safer — it can be revoked without affecting your other repos.
+          </div>
+        </div>
+
+        <div class="card bg-body-tertiary border mb-3" id="pubkey-card">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <b class="small"><i class="bi bi-shield-lock"></i> Public key — add this to the target repository</b>
+              <button class="btn btn-sm btn-primary" type="button" id="copy-pub">
+                <i class="bi bi-clipboard"></i> Copy
+              </button>
+            </div>
+
+            <textarea class="form-control mono" id="pubkey-text" rows="3" readonly
+                      style="font-size:12px; word-break:break-all;"></textarea>
+            <div class="form-text mono" id="pubkey-fp"></div>
+
+            <div class="small mt-3" id="pubkey-help">
+              <b>Where to paste it</b>
+              <ul class="mb-1 ps-3">
+                <li><b>Azure DevOps</b> — avatar (top right) → <i>User settings</i> → <i>SSH public keys</i> → <i>New key</i>.
+                    Applies to every repo that account can reach.
+                    <b>Azure only accepts RSA keys</b> (<code>ssh-rsa …</code>) — it rejects ed25519,
+                    so use <b>New key</b>, which generates RSA-4096.</li>
+                <li><b>GitHub</b> — repo → <i>Settings</i> → <i>Deploy keys</i> → <i>Add deploy key</i>,
+                    and tick <b>Allow write access</b>. Scoped to the one repo.</li>
+                <li><b>GitLab</b> — project → <i>Settings</i> → <i>Repository</i> → <i>Deploy keys</i>,
+                    with <b>write</b> permission.</li>
+              </ul>
+              <div class="text-muted">
+                The key must have <b>write</b> access — a read-only key passes Test connection but fails the push.
+              </div>
+            </div>
+
+            <div class="alert alert-warning mt-2 mb-0 py-2 small d-none" id="pubkey-missing">
+              <i class="bi bi-exclamation-triangle"></i>
+              No public key found for this entry. Either it is passphrase-protected or the
+              <code>.pub</code> file is missing — generate a fresh key with <b>New key</b> instead.
+            </div>
+          </div>
+        </div>
+
+        <hr>
+
+        <div class="mb-3">
+          <label class="form-label">Files to exclude <span class="badge bg-warning-subtle text-warning">never pushed</span></label>
+          <textarea class="form-control mono" name="exclude_patterns" rows="10"
+                    placeholder=".env&#10;node_modules/&#10;*.pem">{{ excludes_text }}</textarea>
+          <div class="form-text">
+            One pattern per line, rsync/gitignore style. <code>#</code> starts a comment.
+            Directories end with <code>/</code>, wildcards allowed (<code>*.pem</code>).
+            <code>.git/</code> is always excluded.
+            <a href="#" id="add-suggested">Insert common defaults</a>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Commit message template</label>
+          <input class="form-control mono" name="commit_template"
+                 value="{{ form.get('commit_template') or (mirror.commit_template if mirror else '') }}"
+                 placeholder="Sync from {repo}/{branch} @ {short_sha}">
+          <div class="form-text">
+            Placeholders: <code>{repo}</code> <code>{owner}</code> <code>{branch}</code>
+            <code>{sha}</code> <code>{short_sha}</code> <code>{user}</code> <code>{time}</code> <code>{mirror}</code>
+          </div>
+        </div>
+
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" name="push_on_deploy" id="push_on_deploy"
+                 {% if (mirror and mirror.push_on_deploy) or form.get('push_on_deploy') %}checked{% endif %}>
+          <label class="form-check-label" for="push_on_deploy">
+            Push automatically after every successful deploy of this branch
+          </label>
+        </div>
+
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" name="force_push" id="force_push"
+                 {% if (mirror and mirror.force_push) or form.get('force_push') %}checked{% endif %}>
+          <label class="form-check-label" for="force_push">
+            Force push <span class="text-danger">— overwrites commits made directly on the target</span>
+          </label>
+        </div>
+
+        {% if mode == 'edit' %}
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="is_active" id="is_active"
+                   {% if mirror.is_active %}checked{% endif %}>
+            <label class="form-check-label" for="is_active">Enabled</label>
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="card-footer d-flex justify-content-between">
+        <a class="btn btn-outline-secondary" href="{{ url_for('admin.repo_detail', repo_id=branch.repo.id) }}">Cancel</a>
+        <button class="btn btn-primary" type="submit">
+          <i class="bi bi-save"></i> {{ 'Save changes' if mode == 'edit' else 'Create mirror' }}
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  const KEYS   = {{ ssh_keys|tojson }};
+  const sel    = document.getElementById('ssh-key-select');
+  const text   = document.getElementById('pubkey-text');
+  const fp     = document.getElementById('pubkey-fp');
+  const missing= document.getElementById('pubkey-missing');
+  const help   = document.getElementById('pubkey-help');
+  const copyBtn= document.getElementById('copy-pub');
+
+  function currentKey() {
+    if (sel.value) return KEYS.find(k => k.path === sel.value);
+    return KEYS.find(k => k.is_default);      // "(default)" — what ssh would pick
+  }
+
+  function render() {
+    const k = currentKey();
+    const pub = k && k.pub ? k.pub : '';
+    text.value = pub;
+    fp.textContent = k && k.fingerprint ? k.fingerprint : '';
+    const ok = !!pub;
+    missing.classList.toggle('d-none', ok);
+    help.classList.toggle('d-none', !ok);
+    copyBtn.disabled = !ok;
+    text.classList.toggle('d-none', !ok);
+  }
+
+  sel.addEventListener('change', render);
+  render();
+
+  copyBtn.addEventListener('click', function () {
+    const done = () => {
+      const old = copyBtn.innerHTML;
+      copyBtn.innerHTML = '<i class="bi bi-check2"></i> Copied';
+      copyBtn.classList.replace('btn-primary', 'btn-success');
+      setTimeout(() => {
+        copyBtn.innerHTML = old;
+        copyBtn.classList.replace('btn-success', 'btn-primary');
+      }, 1800);
+    };
+    // navigator.clipboard needs a secure context; fall back to execCommand.
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text.value).then(done, () => { text.select(); document.execCommand('copy'); done(); });
+    } else {
+      text.select(); document.execCommand('copy'); done();
+    }
+  });
+
+  document.getElementById('gen-key-btn').addEventListener('click', function () {
+    const btn = document.getElementById('gen-key-btn');
+    const suggested = (document.querySelector('input[name="name"]').value || 'mirror').trim();
+    const label = window.prompt(
+      'Name for the new SSH key.\n\nIt will be created as /root/.ssh/mirror_<name>, ' +
+      'selected here, and its public key shown below to copy.',
+      suggested);
+    if (!label) return;
+
+    const body = new FormData();
+    body.append('label', label);
+    body.append('json', '1');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Creating…';
+
+    // Generated in place so nothing typed into this form is lost.
+    fetch("{{ url_for('mirrors.ssh_key_generate') }}", { method: 'POST', body: body })
+      .then(r => r.json())
+      .then(d => {
+        if (!d.ok || !d.key) throw new Error(d.error || 'key generation failed');
+        KEYS.push(d.key);
+        const opt = document.createElement('option');
+        opt.value = d.key.path;
+        opt.textContent = d.key.name;
+        sel.appendChild(opt);
+        sel.value = d.key.path;
+        render();
+        text.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      })
+      .catch(e => window.alert(e.message))
+      .finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-key"></i> New key';
+      });
+  });
+})();
+</script>
+
+<script>
+document.getElementById('add-suggested')?.addEventListener('click', function (e) {
+  e.preventDefault();
+  const ta = document.querySelector('textarea[name="exclude_patterns"]');
+  const have = new Set(ta.value.split('\n').map(s => s.trim()).filter(Boolean));
+  const add = {{ suggested|tojson }}.filter(p => !have.has(p));
+  if (!add.length) return;
+  ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') + add.join('\n');
+});
+</script>
+{% endblock %}

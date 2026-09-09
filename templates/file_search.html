@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Find · {{ branding.name }}{% endblock %}
+{% block content %}
+
+<style>
+  .result-row { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .result-row a { color: var(--text); text-decoration: none; }
+  .result-row a:hover .file { color: var(--accent); }
+  .result-row .file { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; }
+  .result-row .ln   { color: var(--text-soft); font-size: 11px; }
+  .result-row pre   { background: #0b1020; color: #d4d4d4; padding: 8px 10px;
+                      border-radius: 6px; font-size: 12px; margin: 4px 0 0;
+                      white-space: pre-wrap; word-break: break-all; }
+  .result-row mark  { background: rgba(245,158,11,.35); color: inherit; padding: 0 2px; border-radius: 3px; }
+</style>
+
+<div class="d-flex justify-content-between align-items-end mb-3">
+  <div>
+    <h3 class="mb-1">Find in files</h3>
+    <div class="crumbs small-muted">Inside <code>{{ root }}</code></div>
+  </div>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('fm.index', path=root) }}">
+    <i class="bi bi-arrow-left"></i> Back to files
+  </a>
+</div>
+
+<form method="get" action="{{ url_for('fm.search') }}" class="card mb-3">
+  <div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-5">
+        <label class="form-label small text-muted mb-1">Search in (path)</label>
+        <input class="form-control form-control-sm mono" name="path" value="{{ root }}" required>
+      </div>
+      <div class="col-md-5">
+        <label class="form-label small text-muted mb-1">Find</label>
+        <input class="form-control form-control-sm mono" name="q" value="{{ q }}"
+               placeholder='Text or regex — e.g. "TODO" or "(http|https)://"' autofocus>
+      </div>
+      <div class="col-md-2 d-grid">
+        <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-search"></i> Search</button>
+      </div>
+    </div>
+    <div class="form-check form-check-inline mt-2">
+      <input class="form-check-input" type="checkbox" name="regex" value="1" id="opt-regex" {% if regex %}checked{% endif %}>
+      <label class="form-check-label small" for="opt-regex">Regex</label>
+    </div>
+    <div class="form-check form-check-inline mt-2">
+      <input class="form-check-input" type="checkbox" name="case" value="1" id="opt-case" {% if case %}checked{% endif %}>
+      <label class="form-check-label small" for="opt-case">Case-sensitive</label>
+    </div>
+    <span class="small-muted ms-3">Skips <code>node_modules</code>, <code>.git</code>, <code>venv</code>, <code>__pycache__</code>, <code>dist</code>, <code>build</code>, and files > 5 MB.</span>
+  </div>
+</form>
+
+{% if error %}
+  <div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+
+{% if q %}
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="small-muted">
+      <b>{{ results|length }}</b> match{{ '' if results|length == 1 else 'es' }}
+      {% if files_scanned %} across <b>{{ files_scanned }}</b> file(s){% endif %}
+      {% if truncated %} <span class="text-warning">(stopped early at limit)</span>{% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-0">
+      {% if results %}
+        {% set last_path = namespace(v='') %}
+        {% for r in results %}
+          {% if r.path != last_path.v %}
+            {% if not loop.first %}</div>{% endif %}
+            <div>
+              <div class="px-3 py-2" style="background:var(--bg);border-bottom:1px solid var(--border);">
+                <a class="mono fw-semibold" href="{{ url_for('fm.index', path=r.path) }}">{{ r.path }}</a>
+              </div>
+            {% set last_path.v = r.path %}
+          {% endif %}
+          <div class="result-row">
+            <a href="{{ url_for('fm.index', path=r.path) }}#L{{ r.line }}">
+              <span class="ln">line {{ r.line }}</span>
+              <pre>{{ r.text }}</pre>
+            </a>
+          </div>
+        {% endfor %}
+        </div>
+      {% else %}
+        <div class="p-4 text-center text-muted">No matches.</div>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
+{% endblock %}

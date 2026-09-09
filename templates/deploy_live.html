@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Live: deploy #{{ d.id }} · Packwork Deploy{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('admin.deploys') }}">Deploys</a></li>
+    <li class="breadcrumb-item"><a href="{{ url_for('admin.deploy_detail', deploy_id=d.id) }}">#{{ d.id }}</a></li>
+    <li class="breadcrumb-item active">Live</li>
+  </ol>
+</nav>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start">
+      <div>
+        <h4 class="mb-1">
+          Build <b>#{{ d.build_number or '—' }}</b> · {{ d.repo_name }} / {{ d.branch_name }}
+          <span id="status-badge" class="badge badge-status-pending ms-1">{{ d.status }}</span>
+          <span id="auto-refresh-pill" class="badge bg-info-subtle text-info ms-1"
+                style="{% if d.status != 'pending' %}display:none{% endif %}">
+            <i class="bi bi-arrow-clockwise"></i> auto-refreshing
+          </span>
+        </h4>
+        <div class="small-muted">
+          Pusher: <b>{{ d.pusher or '—' }}</b> ·
+          Started: {{ d.started_at.strftime('%Y-%m-%d %H:%M:%S') }}
+          · {{ d.commit_msg or '' }}
+        </div>
+      </div>
+      <div>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.deploy_detail', deploy_id=d.id) }}">
+          <i class="bi bi-file-text"></i> Full details
+        </a>
+      </div>
+    </div>
+
+    <div id="running-row" class="mt-3 p-2" style="background:#fff8e1; border-left: 3px solid #f59e0b; border-radius: 4px;
+                       {% if d.status != 'pending' %}display:none{% endif %}">
+      <div class="small text-muted">Currently running</div>
+      <code id="current-cmd" style="font-size: 13px;">{{ d.current_command or '(starting…)' }}</code>
+      <div class="spinner-border spinner-border-sm text-warning ms-2" role="status"></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <pre id="log-pre" style="background:#0b1020; color:#d4d4d4; padding: 14px; margin: 0;
+                              font-size: 12.5px; line-height: 1.4; max-height: 70vh; overflow-y: auto;
+                              white-space: pre-wrap; word-break: break-all; border-radius: 0 0 6px 6px;"></pre>
+  </div>
+</div>
+
+<div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1080;">
+  <div id="result-toast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+    <div class="toast-header" id="toast-header">
+      <i class="bi bi-check2-circle me-2" id="toast-icon"></i>
+      <strong class="me-auto" id="toast-title">Build</strong>
+      <small class="text-muted" id="toast-time">just now</small>
+      <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+    </div>
+    <div class="toast-body" id="toast-body"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const deployId    = {{ d.id }};
+  const buildNumber = {{ d.build_number|tojson }};
+  const repoLabel   = {{ d.repo_name|tojson }} + '/' + {{ d.branch_name|tojson }};
+  const logEl       = document.getElementById('log-pre');
+  const cmdEl       = document.getElementById('current-cmd');
+  const badgeEl     = document.getElementById('status-badge');
+  const runRow      = document.getElementById('running-row');
+  const refreshPill = document.getElementById('auto-refresh-pill');
+  const toastEl     = document.getElementById('result-toast');
+  const toastHeader = document.getElementById('toast-header');
+  const toastIcon   = document.getElementById('toast-icon');
+  const toastTitle  = document.getElementById('toast-title');
+  const toastBody   = document.getElementById('toast-body');
+  const toastTime   = document.getElementById('toast-time');
+
+  let offset      = 0;
+  let stoppedOnce = false;
+  let lastStatus  = {{ d.status|tojson }};   // for change detection
+  let toastShown  = false;
+
+  function showResultToast(status, error) {
+    if (toastShown) return;
+    toastShown = true;
+    const isSuccess = status === 'success';
+    toastHeader.className = 'toast-header ' + (isSuccess ? 'text-bg-success' : 'text-bg-danger');
+    toastIcon.className   = 'bi me-2 ' + (isSuccess ? 'bi-check2-circle' : 'bi-x-octagon');
+    toastTitle.textContent = isSuccess ? 'Build succeeded' : 'Build failed';
+    toastTime.textContent  = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    toastBody.innerHTML = (isSuccess
+      ? `<b>Build #${buildNumber}</b> on <code>${repoLabel}</code> completed successfully.`
+      : `<b>Build #${buildNumber}</b> on <code>${repoLabel}</code> failed.` +
+        (error ? `<div class="small text-muted mt-1">${error.replace(/</g,'&lt;').slice(0,180)}</div>` : ''));
+    try {
+      bootstrap.Toast.getOrCreateInstance(toastEl, { delay: 12000 }).show();
+    } catch (e) {}
+    // Optional: notify the OS as well, with permission.
+    if (window.Notification && Notification.permission === 'granted') {
+      new Notification((isSuccess ? '✓ ' : '✗ ') + (isSuccess ? 'Build succeeded' : 'Build failed'),
+                       { body: `#${buildNumber} ${repoLabel}` });
+    }
+  }
+
+  function setBadge(status) {
+    badgeEl.textContent = status;
+    badgeEl.className = 'badge ms-1 ' + (
+      status === 'success' ? 'badge-status-success' :
+      status === 'failed'  ? 'badge-status-failed'  : 'badge-status-pending'
+    );
+  }
+
+  function autoscroll() {
+    // only autoscroll if user is already near the bottom
+    const nearBottom = (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight) < 80;
+    if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  async function poll() {
+    try {
+      const r = await fetch(`/deploys/${deployId}/log?offset=${offset}`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+
+      if (j.content) {
+        logEl.appendChild(document.createTextNode(j.content));
+        offset = j.next_offset;
+        autoscroll();
+      }
+      setBadge(j.status);
+      if (j.current_command) {
+        cmdEl.textContent = j.current_command;
+        runRow.style.display = '';
+      } else if (j.status === 'pending') {
+        cmdEl.textContent = '(waiting…)';
+      } else {
+        runRow.style.display = 'none';
+        refreshPill.style.display = 'none';
+      }
+
+      // Detect transition out of "pending" and fire the toast.
+      if (lastStatus === 'pending' && j.status !== 'pending') {
+        showResultToast(j.status, j.error);
+      }
+      lastStatus = j.status;
+
+      if (j.status !== 'pending') {
+        // one final poll after the badge flips to "finished" to make sure we
+        // got the very last lines, then stop.
+        if (!stoppedOnce) { stoppedOnce = true; setTimeout(poll, 800); return; }
+        return;   // stop polling
+      }
+    } catch (e) {
+      console.warn('poll failed', e);
+    }
+    setTimeout(poll, 1500);
+  }
+
+  // If the build was already done when this page loaded, fire the toast once
+  // so the user gets the same feedback even on a refresh / late open.
+  if (lastStatus === 'success' || lastStatus === 'failed') {
+    showResultToast(lastStatus, {{ (d.error or '')|tojson }});
+  }
+
+  // Best-effort: ask once for OS notification permission so future builds can
+  // surface even when this tab isn't focused.
+  if (window.Notification && Notification.permission === 'default') {
+    document.addEventListener('click', function once() {
+      Notification.requestPermission();
+      document.removeEventListener('click', once);
+    }, { once: true });
+  }
+
+  poll();
+})();
+</script>
+{% endblock %}

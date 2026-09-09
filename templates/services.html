@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block title %}Services · {{ branding.name }}{% endblock %}
+{% block content %}
+
+<style>
+  .svc-table td.unit { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; }
+  .svc-table td.desc { color: var(--text-muted); }
+  .svc-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  .svc-dot.running { background:#10b981; box-shadow:0 0 0 2px rgba(16,185,129,.15); }
+  .svc-dot.failed  { background:#ef4444; }
+  .svc-dot.exited  { background:#94a3b8; }
+  .svc-dot.dead    { background:#64748b; }
+  .filter-bar     { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .status-output  { background:#0b1020; color:#d4d4d4; padding:14px; border-radius:var(--radius);
+                    font-family:'JetBrains Mono', monospace; font-size:12.5px;
+                    white-space:pre-wrap; max-height:60vh; overflow:auto; }
+</style>
+
+{% if current_server %}
+  <div class="alert alert-warning d-flex align-items-center mb-3">
+    <i class="bi bi-broadcast me-2" style="font-size:1.2rem;color:#f59e0b;"></i>
+    <div>
+      Showing services on remote <b>{{ current_server.name }}</b>
+      <code class="ms-1">{{ current_server.label }}</code>.
+      Start / stop / restart actions run there over SSH.
+    </div>
+  </div>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-end mb-3">
+  <div>
+    <h3 class="mb-0">systemd services</h3>
+    <div class="small-muted">Live <span class="live-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;animation:pulse 1.6s infinite;margin-right:6px;"></span>refreshes every 5 s · click a row to see <code>systemctl status</code></div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-3">
+    <div class="filter-bar">
+      <input type="search" id="svc-filter" class="form-control form-control-sm" style="max-width:320px;"
+             placeholder="Filter by unit name…">
+      <div class="btn-group btn-group-sm">
+        <button type="button" class="btn btn-outline-secondary state-btn active" data-state="">All</button>
+        <button type="button" class="btn btn-outline-secondary state-btn" data-state="running">Running</button>
+        <button type="button" class="btn btn-outline-secondary state-btn" data-state="failed">Failed</button>
+        <button type="button" class="btn btn-outline-secondary state-btn" data-state="dead">Inactive</button>
+      </div>
+      <div class="ms-auto small-muted"><span id="svc-count">{{ services|length }}</span> units</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-sm align-middle svc-table mb-0">
+      <thead>
+        <tr>
+          <th class="ps-3">Unit</th><th>Active</th><th>Sub</th><th>Description</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="svc-tbody">
+        {% for s in services %}
+          <tr data-unit="{{ s.unit }}" data-sub="{{ s.sub }}" data-active="{{ s.active }}">
+            <td class="ps-3 unit">
+              <span class="svc-dot {{ s.sub }}"></span>
+              <a href="#" class="svc-status-btn" data-unit="{{ s.unit }}">{{ s.unit }}</a>
+            </td>
+            <td class="small-muted">{{ s.active }}</td>
+            <td class="small-muted">{{ s.sub }}</td>
+            <td class="desc">{{ s.description }}</td>
+            <td class="text-nowrap">
+              <button class="btn btn-sm btn-outline-success svc-action" data-unit="{{ s.unit }}" data-action="start"   title="Start"><i class="bi bi-play-fill"></i></button>
+              <button class="btn btn-sm btn-outline-warning svc-action" data-unit="{{ s.unit }}" data-action="restart" title="Restart"><i class="bi bi-arrow-repeat"></i></button>
+              <button class="btn btn-sm btn-outline-secondary svc-action" data-unit="{{ s.unit }}" data-action="reload" title="Reload"><i class="bi bi-arrow-counterclockwise"></i></button>
+              <button class="btn btn-sm btn-outline-danger svc-action" data-unit="{{ s.unit }}" data-action="stop"     title="Stop"><i class="bi bi-stop-fill"></i></button>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Status modal -->
+<div class="modal fade" id="statusModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-info-circle"></i> <span id="status-title">…</span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <pre class="status-output" id="status-output">Loading…</pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const REFRESH_MS = 5000;
+  const tbody = document.getElementById('svc-tbody');
+  const filterIn = document.getElementById('svc-filter');
+  const stateBtns = document.querySelectorAll('.state-btn');
+  let currentState = '';
+
+  function rowMatchesFilters(tr) {
+    const q = filterIn.value.toLowerCase().trim();
+    const unit = (tr.dataset.unit || '').toLowerCase();
+    const sub  = (tr.dataset.sub || '').toLowerCase();
+    if (q && !unit.includes(q)) return false;
+    if (currentState === 'running' && sub !== 'running') return false;
+    if (currentState === 'failed'  && sub !== 'failed')  return false;
+    if (currentState === 'dead'    && sub !== 'dead' && sub !== 'exited') return false;
+    return true;
+  }
+
+  function applyFilters() {
+    let visible = 0;
+    tbody.querySelectorAll('tr').forEach(tr => {
+      const show = rowMatchesFilters(tr);
+      tr.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    document.getElementById('svc-count').textContent = visible;
+  }
+
+  filterIn.addEventListener('input', applyFilters);
+  stateBtns.forEach(b => b.addEventListener('click', () => {
+    stateBtns.forEach(x => x.classList.toggle('active', x === b));
+    currentState = b.dataset.state;
+    applyFilters();
+  }));
+  applyFilters();
+
+  // Click unit name → systemctl status
+  tbody.addEventListener('click', async function (e) {
+    const link = e.target.closest('.svc-status-btn');
+    if (!link) return;
+    e.preventDefault();
+    const unit = link.dataset.unit;
+    document.getElementById('status-title').textContent = unit;
+    document.getElementById('status-output').textContent = 'Loading…';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('statusModal')).show();
+    try {
+      const r = await fetch('/services/status/' + encodeURIComponent(unit));
+      const j = await r.json();
+      document.getElementById('status-output').textContent = j.output || '(empty)';
+    } catch (err) {
+      document.getElementById('status-output').textContent = 'Error: ' + err;
+    }
+  });
+
+  // Action buttons
+  tbody.addEventListener('click', async function (e) {
+    const btn = e.target.closest('.svc-action');
+    if (!btn) return;
+    const unit   = btn.dataset.unit;
+    const action = btn.dataset.action;
+    if (!confirm(`systemctl ${action} ${unit}\n\nProceed?`)) return;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    try {
+      const fd = new FormData();
+      fd.append('unit', unit); fd.append('action', action);
+      const r = await fetch('/services/action', { method: 'POST', body: fd });
+      const j = await r.json();
+      btn.disabled = false;
+      if (j.ok) {
+        btn.innerHTML = '<i class="bi bi-check2 text-success"></i>';
+      } else {
+        btn.innerHTML = '<i class="bi bi-x text-danger"></i>';
+        alert(`Failed: ${j.error || ''}\n${j.output || ''}`);
+      }
+      setTimeout(refresh, 800);
+      setTimeout(() => {
+        // restore the original icon next refresh
+      }, 1500);
+    } catch (err) {
+      btn.disabled = false;
+      alert('Request failed: ' + err);
+    }
+  });
+
+  async function refresh() {
+    try {
+      const r = await fetch('/services/stats');
+      const j = await r.json();
+      tbody.innerHTML = j.services.map(s => `
+        <tr data-unit="${s.unit}" data-sub="${s.sub}" data-active="${s.active}">
+          <td class="ps-3 unit">
+            <span class="svc-dot ${s.sub}"></span>
+            <a href="#" class="svc-status-btn" data-unit="${s.unit}">${s.unit}</a>
+          </td>
+          <td class="small-muted">${s.active}</td>
+          <td class="small-muted">${s.sub}</td>
+          <td class="desc">${s.description.replace(/</g, '&lt;')}</td>
+          <td class="text-nowrap">
+            <button class="btn btn-sm btn-outline-success svc-action" data-unit="${s.unit}" data-action="start"   title="Start"><i class="bi bi-play-fill"></i></button>
+            <button class="btn btn-sm btn-outline-warning svc-action" data-unit="${s.unit}" data-action="restart" title="Restart"><i class="bi bi-arrow-repeat"></i></button>
+            <button class="btn btn-sm btn-outline-secondary svc-action" data-unit="${s.unit}" data-action="reload" title="Reload"><i class="bi bi-arrow-counterclockwise"></i></button>
+            <button class="btn btn-sm btn-outline-danger svc-action" data-unit="${s.unit}" data-action="stop"     title="Stop"><i class="bi bi-stop-fill"></i></button>
+          </td>
+        </tr>`).join('');
+      applyFilters();
+    } catch (e) { /* ignore */ }
+  }
+
+  let timer = setInterval(refresh, REFRESH_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) clearInterval(timer);
+    else { refresh(); timer = setInterval(refresh, REFRESH_MS); }
+  });
+})();
+</script>
+{% endblock %}

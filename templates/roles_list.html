@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Roles · {{ branding.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-end mb-3">
+  <div>
+    <h3 class="mb-0">Roles</h3>
+    <div class="small-muted">{{ roles|length }} role(s) — assign one per user to control what menu items they see.</div>
+  </div>
+  <a class="btn btn-primary" href="{{ url_for('admin.role_new') }}"><i class="bi bi-plus-lg"></i> New role</a>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table align-middle mb-0">
+      <thead><tr>
+        <th class="ps-3">Name</th>
+        <th>Description</th>
+        <th>Permissions</th>
+        <th>Users</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+        {% for r in roles %}
+          <tr>
+            <td class="ps-3 fw-semibold">
+              {{ r.name }}
+              {% if r.is_system %}<span class="badge bg-primary ms-1">built-in</span>{% endif %}
+            </td>
+            <td class="small-muted">{{ r.description or '—' }}</td>
+            <td class="small-muted">{{ r.permissions|length }}</td>
+            <td>
+              {% if r.users %}
+                <span class="badge bg-light text-dark border">{{ r.users|length }}</span>
+              {% else %}<span class="small-muted">none</span>{% endif %}
+            </td>
+            <td class="text-end pe-3 text-nowrap">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.role_edit', role_id=r.id) }}" title="Edit">
+                <i class="bi bi-pencil"></i>
+              </a>
+              {% if not r.is_system %}
+                <form method="post" action="{{ url_for('admin.role_delete', role_id=r.id) }}" class="d-inline"
+                      data-confirm="Delete role '{{ r.name }}'?\n\nUsers currently assigned this role will lose all its permissions (their role becomes none)."
+                      data-confirm-ok="Delete role">
+                  <button class="btn btn-sm btn-outline-danger" type="submit" title="Delete">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

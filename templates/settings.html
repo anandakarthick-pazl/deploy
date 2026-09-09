@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+{% block title %}Settings · {{ branding.name }}{% endblock %}
+{% block content %}
+<h3 class="mb-1">Settings</h3>
+<div class="small-muted mb-3">
+  Last updated
+  {% if s.updated_at %}{{ s.updated_at.strftime('%Y-%m-%d %H:%M') }}{% if s.updated_by %} by {{ s.updated_by }}{% endif %}{% else %}—{% endif %}
+</div>
+
+<ul class="nav nav-tabs mb-3" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'company' %}active{% endif %}"
+            id="tab-company-btn" data-bs-toggle="tab" data-bs-target="#tab-company" type="button" role="tab">
+      <i class="bi bi-building"></i> Company
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'smtp' %}active{% endif %}"
+            id="tab-smtp-btn" data-bs-toggle="tab" data-bs-target="#tab-smtp" type="button" role="tab">
+      <i class="bi bi-envelope-at"></i> SMTP
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link {% if active_tab == 'webhook' %}active{% endif %}"
+            id="tab-webhook-btn" data-bs-toggle="tab" data-bs-target="#tab-webhook" type="button" role="tab">
+      <i class="bi bi-broadcast"></i> Webhook
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+
+  <!-- ============== Company tab ============== -->
+  <div class="tab-pane fade {% if active_tab == 'company' %}show active{% endif %}" id="tab-company" role="tabpanel">
+    <div class="row">
+      <div class="col-lg-8">
+        <form method="post" enctype="multipart/form-data" class="card">
+          <div class="card-body">
+            <input type="hidden" name="section" value="company">
+            <h5 class="card-title">Company branding</h5>
+            <p class="small-muted mb-3">Shown on the login page, the sidebar, and email headers. Defaults to "Company" if not set.</p>
+
+            <div class="row">
+              <div class="col-md-7 mb-3">
+                <label class="form-label">Company name</label>
+                <input class="form-control" name="company_name" value="{{ s.company_name or '' }}" placeholder="Acme Corp">
+              </div>
+              <div class="col-md-5 mb-3">
+                <label class="form-label">Logo</label>
+                <input class="form-control" type="file" name="company_logo" accept="image/png,image/jpeg,image/gif,image/svg+xml,image/webp">
+                <div class="form-text">PNG/JPG/SVG/WEBP, ≤ 2 MB.</div>
+              </div>
+            </div>
+
+            {% if s.company_logo_path %}
+              <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="border rounded p-2 d-inline-block" style="background:#f8f9fa;">
+                  <img src="{{ url_for('static', filename=s.company_logo_path) }}" alt="logo" style="max-height:60px;">
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="remove_logo" id="remove_logo">
+                  <label class="form-check-label" for="remove_logo">Remove current logo</label>
+                </div>
+              </div>
+            {% endif %}
+
+            <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== SMTP tab ============== -->
+  <div class="tab-pane fade {% if active_tab == 'smtp' %}show active{% endif %}" id="tab-smtp" role="tabpanel">
+    <div class="row">
+      <div class="col-lg-7">
+        <form method="post" class="card">
+          <div class="card-body">
+            <input type="hidden" name="section" value="smtp">
+            <h5 class="card-title">SMTP</h5>
+            <p class="small-muted mb-3">Required for deploy notification emails. Gmail users: generate an <a href="https://myaccount.google.com/apppasswords" target="_blank">App Password</a> instead of using your account password.</p>
+
+            <div class="row">
+              <div class="col-md-8 mb-3">
+                <label class="form-label">Host</label>
+                <input class="form-control" name="smtp_host" value="{{ s.smtp_host or '' }}" placeholder="smtp.gmail.com">
+              </div>
+              <div class="col-md-4 mb-3">
+                <label class="form-label">Port</label>
+                <input class="form-control" type="number" name="smtp_port" value="{{ s.smtp_port or '' }}" placeholder="587">
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Username</label>
+              <input class="form-control" name="smtp_user" value="{{ s.smtp_user or '' }}" placeholder="your@gmail.com">
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Password
+                {% if s.smtp_password %}<span class="badge bg-success-subtle text-success ms-1">stored</span>{% endif %}
+              </label>
+              <input class="form-control" type="password" name="smtp_password" autocomplete="new-password"
+                     placeholder="{{ 'leave blank to keep current' if s.smtp_password else 'app password' }}">
+            </div>
+
+            <div class="form-check mb-3">
+              <input class="form-check-input" type="checkbox" name="smtp_use_tls" id="smtp_use_tls"
+                     {% if s.smtp_use_tls %}checked{% endif %}>
+              <label class="form-check-label" for="smtp_use_tls">Use STARTTLS (recommended for port 587)</label>
+            </div>
+
+            <hr>
+            <h6 class="mb-3">"From" identity</h6>
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                <label class="form-label">From address</label>
+                <input class="form-control" name="mail_from" value="{{ s.mail_from or '' }}" placeholder="defaults to username">
+              </div>
+              <div class="col-md-6 mb-3">
+                <label class="form-label">From display name</label>
+                <input class="form-control" name="mail_from_name" value="{{ s.mail_from_name or '' }}" placeholder="Packwork Deploy">
+              </div>
+            </div>
+
+            <hr>
+            <h6 class="mb-2">Threshold alerts (server monitor)</h6>
+            <p class="small-muted mb-2">Send an email + Slack message when these limits are exceeded. Cleared automatically when the metric returns under the threshold.</p>
+            <div class="form-check mb-3">
+              <input class="form-check-input" type="checkbox" name="alerts_enabled" id="alerts_enabled"
+                     {% if s.alerts_enabled %}checked{% endif %}>
+              <label class="form-check-label" for="alerts_enabled">Enable threshold alerts</label>
+            </div>
+            <div class="row">
+              <div class="col-md-4 mb-3">
+                <label class="form-label small text-muted mb-1">CPU threshold (%)</label>
+                <input class="form-control" type="number" min="1" max="100" step="1" name="cpu_threshold"
+                       value="{{ s.cpu_threshold or '' }}" placeholder="e.g. 85">
+              </div>
+              <div class="col-md-4 mb-3">
+                <label class="form-label small text-muted mb-1">Memory threshold (%)</label>
+                <input class="form-control" type="number" min="1" max="100" step="1" name="mem_threshold"
+                       value="{{ s.mem_threshold or '' }}" placeholder="e.g. 90">
+              </div>
+              <div class="col-md-4 mb-3">
+                <label class="form-label small text-muted mb-1">Disk threshold (%)</label>
+                <input class="form-control" type="number" min="1" max="100" step="1" name="disk_threshold"
+                       value="{{ s.disk_threshold or '' }}" placeholder="e.g. 90">
+              </div>
+            </div>
+
+            <hr>
+            <h6 class="mb-2">Slack notifications</h6>
+            <p class="small-muted mb-2">Optional. Posts the same success/fail summary to a Slack channel using an <a href="https://api.slack.com/messaging/webhooks" target="_blank">incoming webhook</a>.</p>
+            <div class="mb-3">
+              <label class="form-label small text-muted mb-1">Slack webhook URL</label>
+              <input class="form-control mono" type="url" name="slack_webhook_url"
+                     value="{{ s.slack_webhook_url or '' }}"
+                     placeholder="https://hooks.slack.com/services/...">
+              <div class="form-text">Leave blank to disable Slack messages.</div>
+            </div>
+
+            <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> Save</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="col-lg-5">
+        <div class="card">
+          <div class="card-body">
+            <h5 class="card-title">Send a test email</h5>
+            <p class="small-muted">Uses the saved SMTP settings to send a test message. Save changes first if you've edited any field.</p>
+            <form method="post" action="{{ url_for('admin.settings_test_email') }}">
+              <div class="mb-3">
+                <label class="form-label">Send to</label>
+                <input class="form-control" type="email" name="recipient" required placeholder="you@example.com">
+              </div>
+              <button class="btn btn-outline-primary" type="submit"><i class="bi bi-envelope-arrow-up"></i> Send test</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="card mt-3">
+          <div class="card-body">
+            <h6 class="card-title">Recipient resolution</h6>
+            <ol class="small mb-0">
+              <li><b>Branch-level recipients</b> if set</li>
+              <li>else <b>repo-level recipients</b></li>
+              <li>else the env <code>MAIL_TO</code> fallback</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== Webhook tab ============== -->
+  <div class="tab-pane fade {% if active_tab == 'webhook' %}show active{% endif %}" id="tab-webhook" role="tabpanel">
+    <div class="row">
+      <div class="col-lg-7">
+        <div class="card mb-3">
+          <div class="card-body">
+            <h5 class="card-title">GitHub webhook</h5>
+            <p class="small-muted mb-3">
+              Paste these values into <i>each</i> GitHub repo's Webhooks settings page
+              (Settings → Webhooks → Add webhook).
+            </p>
+
+            <div class="mb-3">
+              <label class="form-label small text-muted mb-1">Payload URL</label>
+              <div class="input-group input-group-sm">
+                <input class="form-control mono" id="webhook-url-field" value="{{ webhook_url }}" readonly>
+                <button class="btn btn-outline-secondary" type="button" data-copy-target="#webhook-url-field" title="Copy URL">
+                  <i class="bi bi-clipboard"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label small text-muted mb-1">Content type</label>
+              <div class="input-group input-group-sm">
+                <input class="form-control mono" id="webhook-ct-field" value="application/json" readonly>
+                <button class="btn btn-outline-secondary" type="button" data-copy-target="#webhook-ct-field" title="Copy">
+                  <i class="bi bi-clipboard"></i>
+                </button>
+              </div>
+              <div class="form-text">Must be <code>application/json</code> — the form-urlencoded option will not work with this server.</div>
+            </div>
+          </div>
+        </div>
+
+        <form method="post" class="card">
+          <div class="card-body">
+            <input type="hidden" name="section" value="webhook">
+            <h5 class="card-title">Webhook secret</h5>
+            <p class="small-muted mb-3">
+              The shared signing key GitHub uses to HMAC each push. Currently sourced from <b>{{ secret_source }}</b>.
+              Paste the same value into every repo's webhook configuration.
+            </p>
+
+            <div class="mb-3">
+              <label class="form-label small text-muted mb-1">Current secret</label>
+              <div class="input-group input-group-sm">
+                <input class="form-control mono" id="webhook-secret-field" name="webhook_secret"
+                       type="password" value="{{ effective_secret }}"
+                       placeholder="Click Regenerate to create a new secret">
+                <button class="btn btn-outline-secondary" type="button" id="webhook-secret-toggle" title="Show / hide">
+                  <i class="bi bi-eye"></i>
+                </button>
+                <button class="btn btn-outline-secondary" type="button" data-copy-target="#webhook-secret-field" title="Copy">
+                  <i class="bi bi-clipboard"></i>
+                </button>
+              </div>
+              <div class="form-text">Clear the field and save to fall back to the env <code>WEBHOOK_SECRET</code>. Empty everywhere = signature check disabled (not recommended).</div>
+            </div>
+
+            <div class="d-flex justify-content-between">
+              <button class="btn btn-warning btn-sm" type="submit" name="regenerate_webhook_secret" value="1"
+                      data-confirm="Regenerate the webhook secret?\n\nThis breaks every existing GitHub webhook until you update them with the new value."
+                      data-confirm-ok="Regenerate" data-confirm-class="btn-warning">
+                <i class="bi bi-arrow-repeat"></i> Regenerate
+              </button>
+              <button class="btn btn-primary btn-sm" type="submit">
+                <i class="bi bi-save"></i> Save secret
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  document.querySelectorAll('[data-copy-target]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const inp = document.querySelector(btn.dataset.copyTarget);
+      if (!inp) return;
+      const oldType = inp.type;
+      if (oldType === 'password') inp.type = 'text';
+      inp.select(); inp.setSelectionRange(0, inp.value.length);
+      try { navigator.clipboard.writeText(inp.value); } catch (e) { document.execCommand('copy'); }
+      if (oldType === 'password') inp.type = oldType;
+      const icon = btn.querySelector('i');
+      if (icon) {
+        const old = icon.className;
+        icon.className = 'bi bi-check2 text-success';
+        setTimeout(function () { icon.className = old; }, 1200);
+      }
+    });
+  });
+
+  const toggle = document.getElementById('webhook-secret-toggle');
+  const field  = document.getElementById('webhook-secret-field');
+  if (toggle && field) {
+    toggle.addEventListener('click', function () {
+      const showing = field.type === 'text';
+      field.type = showing ? 'password' : 'text';
+      const icon = toggle.querySelector('i');
+      if (icon) icon.className = 'bi ' + (showing ? 'bi-eye' : 'bi-eye-slash');
+    });
+  }
+
+  // Sync active tab into the URL hash so reloads keep the tab and submits land on the right one
+  document.querySelectorAll('button[data-bs-toggle="tab"]').forEach(function (btn) {
+    btn.addEventListener('shown.bs.tab', function (e) {
+      const id = e.target.dataset.bsTarget.replace('#tab-', '');
+      const url = new URL(window.location);
+      url.searchParams.set('tab', id);
+      window.history.replaceState({}, '', url.toString());
+    });
+  });
+})();
+</script>
+{% endblock %}

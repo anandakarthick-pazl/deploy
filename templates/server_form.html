@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit server' if server else 'Add server' }} · {{ branding.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('servers.index') }}">Servers</a></li>
+    <li class="breadcrumb-item active">{{ 'Edit ' + server.name if server else 'Add server' }}</li>
+  </ol>
+</nav>
+
+<form method="post" class="card">
+  <div class="card-body">
+    <div class="row">
+      <div class="col-md-5 mb-3">
+        <label class="form-label">Name</label>
+        <input class="form-control" name="name" required
+               value="{{ form.get('name') or (server.name if server else '') }}"
+               placeholder='e.g. "Production web"'>
+      </div>
+      <div class="col-md-7 mb-3">
+        <label class="form-label">Description <span class="text-muted small">(optional)</span></label>
+        <input class="form-control" name="description"
+               value="{{ form.get('description') or (server.description if server else '') }}">
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Host</label>
+        <input class="form-control mono" name="host" required
+               value="{{ form.get('host') or (server.host if server else '') }}"
+               placeholder="hostname or IP">
+      </div>
+      <div class="col-md-2 mb-3">
+        <label class="form-label">Port</label>
+        <input class="form-control" type="number" name="port" min="1" max="65535"
+               value="{{ form.get('port') or (server.port if server else 22) }}">
+      </div>
+      <div class="col-md-4 mb-3">
+        <label class="form-label">Username</label>
+        <input class="form-control mono" name="username" required
+               value="{{ form.get('username') or (server.username if server else '') }}"
+               placeholder="ubuntu, root, …">
+      </div>
+    </div>
+
+    <ul class="nav nav-tabs mb-3" role="tablist">
+      <li class="nav-item">
+        <button type="button" class="nav-link auth-tab {% if (form.get('auth_type') or (server.auth_type if server else 'password')) == 'password' %}active{% endif %}"
+                data-auth="password" data-bs-toggle="tab" data-bs-target="#auth-password" role="tab">
+          <i class="bi bi-key"></i> Password
+        </button>
+      </li>
+      <li class="nav-item">
+        <button type="button" class="nav-link auth-tab {% if (form.get('auth_type') or (server.auth_type if server else 'password')) == 'key' %}active{% endif %}"
+                data-auth="key" data-bs-toggle="tab" data-bs-target="#auth-key" role="tab">
+          <i class="bi bi-key-fill"></i> Private key
+        </button>
+      </li>
+    </ul>
+    <input type="hidden" name="auth_type" id="auth-type-input"
+           value="{{ form.get('auth_type') or (server.auth_type if server else 'password') }}">
+
+    <div class="tab-content">
+      <div class="tab-pane fade {% if (form.get('auth_type') or (server.auth_type if server else 'password')) == 'password' %}show active{% endif %}" id="auth-password">
+        <div class="mb-3">
+          <label class="form-label">Password
+            {% if server and server.password %}<span class="badge bg-success-subtle text-success ms-1">stored</span>{% endif %}
+          </label>
+          <input class="form-control" type="password" name="password" autocomplete="new-password"
+                 placeholder="{{ 'leave blank to keep current' if server and server.password else 'SSH password' }}">
+        </div>
+      </div>
+
+      <div class="tab-pane fade {% if (form.get('auth_type') or (server.auth_type if server else 'password')) == 'key' %}show active{% endif %}" id="auth-key">
+        <div class="mb-3">
+          <label class="form-label">OpenSSH private key
+            {% if server and server.private_key %}<span class="badge bg-success-subtle text-success ms-1">stored</span>{% endif %}
+          </label>
+          <textarea class="form-control mono" name="private_key" rows="10"
+                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+                    style="font-size: 12px;">{{ form.get('private_key') or '' }}</textarea>
+          <div class="form-text">
+            Paste an OpenSSH-format private key. If you only have a PuTTY <code>.ppk</code> file, open
+            it in <b>PuTTYgen</b> → <i>Conversions</i> → <i>Export OpenSSH key</i>, then paste the result here.
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Key passphrase <span class="text-muted small">(if encrypted)</span></label>
+          <input class="form-control" type="password" name="key_passphrase" autocomplete="new-password"
+                 placeholder="leave blank if the key isn't encrypted">
+        </div>
+      </div>
+    </div>
+
+    <hr>
+    <div class="d-flex">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> {{ 'Save' if server else 'Create server' }}</button>
+      <a class="btn btn-link" href="{{ url_for('servers.index') }}">Cancel</a>
+    </div>
+  </div>
+</form>
+
+<script>
+// Keep the hidden auth_type in sync with whichever tab is active.
+document.querySelectorAll('.auth-tab').forEach(btn => btn.addEventListener('shown.bs.tab', function () {
+  document.getElementById('auth-type-input').value = btn.dataset.auth;
+}));
+</script>
+{% endblock %}

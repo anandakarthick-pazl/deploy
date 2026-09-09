@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Users · Packwork Deploy{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-end mb-4">
+  <div>
+    <h3 class="mb-0">Users</h3>
+    <div class="small-muted">{{ users|length }} user(s) configured</div>
+  </div>
+  <a class="btn btn-primary" href="{{ url_for('admin.user_new') }}">
+    <i class="bi bi-person-plus"></i> Add User
+  </a>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table align-middle mb-0">
+      <thead>
+        <tr>
+          <th class="ps-3">Username</th>
+          <th>Role</th>
+          <th>Accessible repos</th>
+          <th>Status</th>
+          <th>Last login</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+          <tr>
+            <td class="ps-3">
+              <i class="bi bi-person-circle"></i>
+              <span class="fw-semibold">{{ u.username }}</span>
+              {% if u.email %}<div class="small-muted">{{ u.email }}</div>{% endif %}
+              {% if u.needs_password_setup %}
+                <span class="badge bg-warning text-dark ms-1" title="No password set">setup pending</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if u.is_admin %}
+                <span class="badge bg-primary">Admin</span>
+              {% elif u.role %}
+                <span class="badge bg-light text-dark border">{{ u.role.name }}</span>
+              {% else %}
+                <span class="badge bg-light text-dark border text-muted">no role</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if u.is_admin %}
+                <span class="text-muted small">(all)</span>
+              {% elif u.repos %}
+                {% for r in u.repos %}
+                  <span class="badge bg-light text-dark border">{{ r.name }}</span>
+                {% endfor %}
+              {% else %}
+                <span class="text-muted small">none</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if u.is_active %}
+                <span class="badge bg-success-subtle text-success">active</span>
+              {% else %}
+                <span class="badge bg-secondary">disabled</span>
+              {% endif %}
+            </td>
+            <td class="small-muted">
+              {% if u.last_login_at %}{{ u.last_login_at.strftime('%Y-%m-%d %H:%M') }}{% else %}never{% endif %}
+            </td>
+            <td class="text-end pe-3 text-nowrap">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.user_edit', user_id=u.id) }}"
+                 title="Edit user">
+                <i class="bi bi-pencil"></i>
+              </a>
+              {% if u.id != current_user.id %}
+                <form method="post" action="{{ url_for('admin.user_delete', user_id=u.id) }}" class="d-inline"
+                      data-confirm="Delete user '{{ u.username }}'?\n\nThey will no longer be able to sign in. Their deploy history is preserved."
+                      data-confirm-ok="Delete user">
+                  <button class="btn btn-sm btn-outline-danger" type="submit" title="Delete user">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

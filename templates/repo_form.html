@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit repo' if mode == 'edit' else 'Add repo' }} · Packwork Deploy{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <h3>{{ 'Edit repo' if mode == 'edit' else 'Add a repo' }}</h3>
+    <form method="post" class="card mt-3">
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-5 mb-3">
+            <label class="form-label">Owner</label>
+            <input class="form-control" name="owner" required
+                   value="{{ form.get('owner') or (repo.owner if repo else '') }}">
+            <div class="form-text">GitHub user/org, e.g. <code>anandakarthick-pazl</code></div>
+          </div>
+          <div class="col-md-7 mb-3">
+            <label class="form-label">Repo name</label>
+            <input class="form-control" name="name" required
+                   value="{{ form.get('name') or (repo.name if repo else '') }}">
+            <div class="form-text">e.g. <code>docker-packworx-be</code></div>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Display name <span class="text-muted small">(optional)</span></label>
+          <input class="form-control" name="display_name"
+                 value="{{ form.get('display_name') or (repo.display_name if repo else '') }}">
+          <div class="form-text">Friendly label shown in the sidebar. Leave blank to use the repo name.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Deploy on server</label>
+          {% set selected_sid = form.get('server_id') or (repo.server_id|string if (repo and repo.server_id) else '') %}
+          <select class="form-select" name="server_id">
+            <option value="" {% if not selected_sid %}selected{% endif %}>Local server (this box)</option>
+            {% for s in servers %}
+              <option value="{{ s.id }}" {% if selected_sid == s.id|string %}selected{% endif %}>
+                {{ s.name }} — {{ s.username }}@{{ s.host }}:{{ s.port }}
+              </option>
+            {% endfor %}
+          </select>
+          <div class="form-text">
+            When set, every deploy for this repo (webhook or manual) opens an SSH session to the chosen
+            server, <code>cd</code>s into each branch's path on that machine, and runs the git pull +
+            post-deploy commands there. Add servers under <a href="{{ url_for('servers.index') }}">Servers</a>.
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Default recipients</label>
+          <textarea class="form-control mono" name="recipients" rows="3"
+                    placeholder="one email per line">{{ recipients_text }}</textarea>
+          <div class="form-text">Used for every branch unless that branch overrides.</div>
+        </div>
+        {% if mode == 'edit' %}
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="is_active" id="is_active"
+                   {% if repo.is_active %}checked{% endif %}>
+            <label class="form-check-label" for="is_active">Active</label>
+          </div>
+        {% endif %}
+        <button class="btn btn-primary" type="submit">{{ 'Save' if mode == 'edit' else 'Create repo' }}</button>
+        <a class="btn btn-link" href="{{ url_for('admin.dashboard') }}">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

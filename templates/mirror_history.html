@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Mirror pushes · Packwork Deploy{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('admin.dashboard') }}">Dashboard</a></li>
+    <li class="breadcrumb-item active">Mirror pushes</li>
+  </ol>
+</nav>
+
+<h3 class="mb-3">Mirror pushes</h3>
+
+{% if not pushes %}
+  <div class="alert alert-info">
+    No mirror pushes yet. Configure one from a repo's branch card
+    (<i class="bi bi-arrow-up-right-square"></i> <b>Push to…</b>).
+  </div>
+{% else %}
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr>
+          <th>#</th><th>Mirror</th><th>Target</th><th>Status</th>
+          <th class="text-end">Files</th><th class="text-end">Held back</th>
+          <th>By</th><th>Started</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in pushes %}
+          <tr>
+            <td class="text-muted">{{ p.id }}</td>
+            <td>{{ p.mirror_label }}</td>
+            <td><code class="small">{{ p.target_branch }}</code></td>
+            <td>
+              {% if p.status == 'success' %}<span class="badge bg-success-subtle text-success">success</span>
+              {% elif p.status == 'failed' %}<span class="badge bg-danger-subtle text-danger">failed</span>
+              {% elif p.status == 'running' %}<span class="badge bg-warning-subtle text-warning">running</span>
+              {% else %}<span class="badge bg-secondary">no changes</span>{% endif %}
+            </td>
+            <td class="text-end">{{ p.files_changed if p.files_changed is not none else '—' }}</td>
+            <td class="text-end">{{ p.files_excluded if p.files_excluded is not none else '—' }}</td>
+            <td class="small">{{ p.triggered_by or '—' }}</td>
+            <td class="small text-muted">{{ p.started_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-secondary"
+                 href="{{ url_for('mirrors.mirror_push_detail', push_id=p.id) }}">
+                <i class="bi bi-file-text"></i> Log
+              </a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

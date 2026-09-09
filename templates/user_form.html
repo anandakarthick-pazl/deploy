@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit user' if mode == 'edit' else 'Add user' }} · Packwork Deploy{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('admin.users_list') }}">Users</a></li>
+    <li class="breadcrumb-item active">{{ 'Edit ' + user.username if mode == 'edit' else 'Add user' }}</li>
+  </ol>
+</nav>
+
+<div class="row">
+  <div class="col-lg-7">
+    <form method="post" class="card">
+      <div class="card-body">
+        <h5 class="mb-3">{{ 'Edit user' if mode == 'edit' else 'Add a user' }}</h5>
+
+        <div class="row">
+          <div class="col-md-5 mb-3">
+            <label class="form-label">Username</label>
+            <input class="form-control" name="username" required
+                   value="{{ form.get('username') or (user.username if user else '') }}">
+          </div>
+          <div class="col-md-7 mb-3">
+            <label class="form-label">Email <span class="text-muted small">(for login emails + password reset)</span></label>
+            <input class="form-control" type="email" name="email"
+                   value="{{ form.get('email') or (user.email if user else '') }}">
+          </div>
+        </div>
+
+        {% if mode == 'new' %}
+          <div class="mb-3">
+            <label class="form-label">Initial password
+              <span class="text-muted small">(optional — leave blank to email a "set password" link)</span>
+            </label>
+            <input class="form-control" type="password" name="password" autocomplete="new-password">
+          </div>
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="send_credentials" id="send_credentials"
+                   {% if form.get('send_credentials') %}checked{% endif %}>
+            <label class="form-check-label" for="send_credentials">
+              <b>Email login details</b> — sends a welcome email with credentials (or a "set your password" link if no password is set above). Requires an email address.
+            </label>
+          </div>
+        {% endif %}
+
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" name="is_admin" id="is_admin"
+                 {% if (form.get('is_admin') or (user and user.is_admin)) %}checked{% endif %}
+                 {% if user and user.id == current_user.id %}disabled{% endif %}>
+          <label class="form-check-label" for="is_admin">
+            <b>Admin</b> — superuser, bypasses all role/permission checks
+          </label>
+          {% if user and user.id == current_user.id %}
+            <input type="hidden" name="is_admin" value="1">
+            <div class="small-muted">You can't demote yourself.</div>
+          {% endif %}
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Role <span class="text-muted small">(non-admin users — defines what menu items they see)</span></label>
+          <select class="form-select" name="role_id">
+            <option value="">— No role (no access unless Admin) —</option>
+            {% for r in all_roles %}
+              <option value="{{ r.id }}"
+                {% if (user and user.role_id == r.id) or form.get('role_id')|int == r.id %}selected{% endif %}>
+                {{ r.name }}{% if r.description %} — {{ r.description }}{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+          <div class="form-text">
+            Manage roles under <a href="{{ url_for('admin.roles_list') }}">Admin → Roles</a>.
+          </div>
+        </div>
+
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" name="is_active" id="is_active"
+                 {% if mode == 'new' or (user and user.is_active) %}checked{% endif %}>
+          <label class="form-check-label" for="is_active">Active (can sign in)</label>
+        </div>
+
+        <h6 class="mt-4 mb-2">Accessible repositories</h6>
+        <p class="small-muted mb-2">Non-admin users only see and manage the repos checked below.</p>
+        <div class="row" id="repo-checkboxes">
+          {% for r in all_repos %}
+            <div class="col-md-6">
+              <div class="form-check">
+                <input class="form-check-input repo-cb" type="checkbox" name="repo_ids" value="{{ r.id }}"
+                       id="repo-{{ r.id }}"
+                       {% if r.id in selected_repo_ids %}checked{% endif %}>
+                <label class="form-check-label" for="repo-{{ r.id }}">
+                  <code>{{ r.owner }}/{{ r.name }}</code>
+                </label>
+              </div>
+            </div>
+          {% else %}
+            <div class="col-12"><div class="text-muted small">No repos configured yet.</div></div>
+          {% endfor %}
+        </div>
+        {% if all_repos %}
+          <div class="mt-2">
+            <button type="button" class="btn btn-link btn-sm p-0"
+                    onclick="document.querySelectorAll('.repo-cb').forEach(c=>c.checked=true)">Select all</button>
+            ·
+            <button type="button" class="btn btn-link btn-sm p-0"
+                    onclick="document.querySelectorAll('.repo-cb').forEach(c=>c.checked=false)">Clear</button>
+          </div>
+        {% endif %}
+
+        <hr>
+        <button class="btn btn-primary" type="submit">
+          {{ 'Save user' if mode == 'edit' else 'Create user' }}
+        </button>
+        <a class="btn btn-link" href="{{ url_for('admin.users_list') }}">Cancel</a>
+      </div>
+    </form>
+  </div>
+
+  {% if mode == 'edit' %}
+  <div class="col-lg-5">
+    <div class="card mb-3">
+      <div class="card-body">
+        <h6 class="card-title">Reset password</h6>
+        <p class="small-muted">Set a new password for this user, or leave blank to clear so they're prompted to set one on their next login.</p>
+        <form method="post" action="{{ url_for('admin.user_reset_password', user_id=user.id) }}">
+          <div class="mb-2">
+            <input class="form-control" type="password" name="password" placeholder="new password (or empty)">
+          </div>
+          <button class="btn btn-outline-warning btn-sm" type="submit">
+            <i class="bi bi-key"></i> Reset password
+          </button>
+        </form>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-body">
+        <h6 class="card-title">Account info</h6>
+        <ul class="list-unstyled mb-0 small">
+          <li><b>Created:</b> {{ user.created_at }}</li>
+          <li><b>Last login:</b> {{ user.last_login_at or '—' }}</li>
+          <li><b>Password set:</b> {{ 'no' if user.needs_password_setup else 'yes' }}</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,75 @@
+{
+  "_comment": "recipients can be set per branch (highest priority) or per repo. Edits take effect on the next webhook (no restart).",
+  "repos": {
+    "pazl_interior-design": {
+      "owner": "Pazl-Infolyte-1",
+      "recipients": ["team@pazl.info"],
+      "branches": {
+        "main": {
+          "path": "/srv/code/Source_Code/pazl_interior-design",
+          "commands": [
+            "(cd pazl-auth-backend && npm install --no-audit --no-fund && npm install config@^3.3.12 --no-audit --no-fund)",
+            "(cd pazl-design-backend && npm install --no-audit --no-fund && npm install config@^3.3.12 --no-audit --no-fund)",
+            "(cd pazl-ai-backend && npm install --no-audit --no-fund && npm install config@^3.3.12 --no-audit --no-fund)",
+            "(cd pazl-ai-frontend && npm install --no-audit --no-fund && CI=false NODE_OPTIONS=--max-old-space-size=4096 npm run build)",
+            "(cd pazl-design-frontend && npm install --no-audit --no-fund && NODE_OPTIONS=--max-old-space-size=4096 npm run build)",
+            "pm2 reload ecosystem.config.js --only pazl-auth-backend,pazl-design-backend,pazl-ai-backend --update-env",
+            "pm2 save"
+          ]
+        }
+      }
+    },
+    "packwork-prototype": {
+      "owner": "anandakarthick-pazl",
+      "recipients": ["ananda.s@pazl.info","vignesh.s@pazl.info"],
+      "branches": {
+        "main": {
+          "path": "/srv/code/Source_Code/packworx/packwork-prototype",
+          "commands": []
+        }
+      }
+    },
+    "docker-packworx-be": {
+      "owner": "anandakarthick-pazl",
+      "recipients": ["ananda.s@pazl.info","vignesh.s@pazl.info"],
+      "branches": {
+        "new_development": {
+          "path": "/srv/code/Source_Code/packworx/packworx_development/docker-packworx-be",
+          "commands": [
+            "npm install --no-audit --no-fund",
+            "for d in services/*/; do [ -f \"$d/package.json\" ] && (cd \"$d\" && npm install --no-audit --no-fund) || true; done",
+            "[ -f api-gateway/package.json ] && (cd api-gateway && npm install --no-audit --no-fund) || true",
+            "for d in services/*/; do [ -f \"$d/package.json\" ] && (cd \"$d\" && npm run migrate --if-present) || true; done",
+            "pm2 reload ecosystem.config.js --only auth-service-development,common-service-development,customer-service-development,process-service-development,product-service-development,procurement-service-development,sku-service-development,sales-order-service-development,work-order-service-development,machines-service-development,invoice-service-development,company-settings-service-development,super-admin-service-development,material-allocation-service-development,route-service-development --update-env",
+            "pm2 save"
+          ]
+        },
+        "testing": {
+          "path": "/srv/code/Source_Code/packworx/packworx_testing/docker-packworx-be",
+          "commands": [
+            "npm install --no-audit --no-fund",
+            "for d in services/*/; do [ -f \"$d/package.json\" ] && (cd \"$d\" && npm install --no-audit --no-fund) || true; done",
+            "[ -f api-gateway/package.json ] && (cd api-gateway && npm install --no-audit --no-fund) || true",
+            "for d in services/*/; do [ -f \"$d/package.json\" ] && (cd \"$d\" && npm run migrate --if-present) || true; done",
+            "pm2 reload ecosystem.config.js --only auth-service-testing,common-service-testing,customer-service-testing,process-service-testing,product-service-testing,procurement-service-testing,sku-service-testing,sales-order-service-testing,work-order-service-testing,machines-service-testing,invoice-service-testing,company-settings-service-testing,super-admin-service-testing,material-allocation-service-testing,route-service-testing --update-env",
+            "pm2 save"
+          ]
+        }
+      }
+    },
+    "docker-packworx-fe": {
+      "owner": "anandakarthick-pazl",
+      "recipients": ["ananda.s@pazl.info","vignesh.s@pazl.info"],
+      "branches": {
+        "new_development": {
+          "path": "/srv/code/Source_Code/packworx/packworx_development/docker-packworx-fe",
+          "commands": ["npm install --no-audit --no-fund", "npm run build"]
+        },
+        "testing": {
+          "path": "/srv/code/Source_Code/packworx/packworx_testing/docker-packworx-fe",
+          "commands": ["npm install --no-audit --no-fund", "npm run build"]
+        }
+      }
+    }
+  }
+}

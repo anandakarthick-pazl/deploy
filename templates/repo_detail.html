@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}{{ repo.owner }}/{{ repo.name }} · Packwork Deploy{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('admin.dashboard') }}">Dashboard</a></li>
+    <li class="breadcrumb-item active">{{ repo.owner }}/{{ repo.name }}</li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-end mb-3">
+  <div>
+    <h3 class="mb-1">{{ repo.owner }}/{{ repo.name }}
+      {% if not repo.is_active %}<span class="badge bg-secondary">inactive</span>{% endif %}
+    </h3>
+    <div class="small-muted">
+      Default recipients:
+      {% if repo.recipients %}
+        {% for r in repo.recipients %}<span class="badge bg-light text-dark border me-1">{{ r }}</span>{% endfor %}
+      {% else %}<em>(falls back to MAIL_TO)</em>{% endif %}
+    </div>
+  </div>
+  <div>
+    {% if has_perm('repos.edit') %}
+      <a class="btn btn-outline-primary btn-sm" href="{{ url_for('admin.repo_edit', repo_id=repo.id) }}"><i class="bi bi-pencil"></i> Edit</a>
+    {% endif %}
+    {% if current_user.is_admin %}
+    <form method="post" action="{{ url_for('admin.repo_delete', repo_id=repo.id) }}" class="d-inline"
+          data-confirm="Delete {{ repo.owner }}/{{ repo.name }}?\n\nThis also removes every branch under this repo and its full deploy history. This action cannot be undone."
+          data-confirm-ok="Delete repo">
+      <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-trash"></i> Delete</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <h4 class="mb-0">Branches</h4>
+  <a class="btn btn-primary btn-sm" href="{{ url_for('admin.branch_new', repo_id=repo.id) }}">
+    <i class="bi bi-plus-lg"></i> Add branch
+  </a>
+</div>
+
+{% if not repo.branches %}
+  <div class="alert alert-warning">No branches yet. Add one so the webhook knows what to do on a push.</div>
+{% endif %}
+
+{% for br in repo.branches|sort(attribute='name') %}
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="card-title-row">
+        <div>
+          <h5 class="mb-1"><code>{{ br.name }}</code>
+            {% if br.auto_deploy %}
+              <span class="badge bg-success-subtle text-success" title="Pushes auto-deploy">
+                <i class="bi bi-lightning-charge"></i> auto
+              </span>
+            {% else %}
+              <span class="badge bg-warning-subtle text-warning" title="Pushes wait for manual deploy">
+                <i class="bi bi-hand-index"></i> manual
+              </span>
+            {% endif %}
+            {% if not br.is_active %}<span class="badge bg-secondary">inactive</span>{% endif %}
+          </h5>
+          <div class="small-muted">
+            path: <code>{{ br.path }}</code>
+            · {{ (br.commands or [])|length }} command(s)
+            {% if br.recipients %} · branch recipients:
+              {% for r in br.recipients %}<span class="badge bg-light text-dark border">{{ r }}</span>{% endfor %}
+            {% endif %}
+          </div>
+        </div>
+        <div class="text-nowrap">
+          <form method="post" action="{{ url_for('admin.branch_test_build', branch_id=br.id) }}" class="d-inline"
+                data-confirm="Trigger a test build for branch '{{ br.name }}'?\n\nThis will pull the latest code and run the configured commands."
+                data-confirm-ok="Run build" data-confirm-class="btn-success">
+            <button class="btn btn-success btn-sm" type="submit" title="Pull, run commands, send email">
+              <i class="bi bi-play-fill"></i> Test build
+            </button>
+          </form>
+          <form method="post" action="{{ url_for('admin.branch_test_build', branch_id=br.id) }}" class="d-inline"
+                data-confirm="Trigger a SILENT test build for branch '{{ br.name }}'?\n\nSame as Test build, but no email or Slack notification will be sent on success or failure."
+                data-confirm-ok="Run silent build" data-confirm-class="btn-secondary">
+            <input type="hidden" name="silent" value="1">
+            <button class="btn btn-outline-secondary btn-sm" type="submit" title="Test build (no email / Slack)">
+              <i class="bi bi-bell-slash"></i>
+            </button>
+          </form>
+          <a class="btn btn-outline-primary btn-sm" href="{{ url_for('admin.branch_edit', branch_id=br.id) }}"
+             title="Edit branch">
+            <i class="bi bi-pencil"></i>
+          </a>
+          <form method="post" action="{{ url_for('admin.branch_delete', branch_id=br.id) }}" class="d-inline"
+                data-confirm="Delete branch '{{ br.name }}'?\n\nIts deploy history is preserved but no future pushes to this branch will be handled until you re-add it."
+                data-confirm-ok="Delete branch">
+            <button class="btn btn-outline-danger btn-sm" type="submit" title="Delete branch">
+              <i class="bi bi-trash"></i>
+            </button>
+          </form>
+        </div>
+      </div>
+      {% if br.commands %}
+        <pre class="cmd-pre mt-3 mb-0">{% for c in br.commands %}$ {{ c }}{% if not loop.last %}
+{% endif %}{% endfor %}</pre>
+      {% endif %}
+
+      {% if has_perm('mirrors.view') %}
+        <div class="mt-3 pt-3 border-top">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="small-muted"><i class="bi bi-arrow-up-right-square"></i> Push to another repository</span>
+            {% if has_perm('mirrors.manage') %}
+              <a class="btn btn-outline-secondary btn-sm"
+                 href="{{ url_for('mirrors.mirror_new', branch_id=br.id) }}">
+                <i class="bi bi-plus-lg"></i> Config another repo
+              </a>
+            {% endif %}
+          </div>
+
+          {% if not br.mirrors %}
+            <div class="small-muted fst-italic">
+              No target configured. Use <b>Config another repo</b> to add one (Azure DevOps, GitLab, …).
+            </div>
+          {% endif %}
+
+          {% for m in br.mirrors|sort(attribute='name') %}
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 py-1">
+              <div class="small">
+                <b>{{ m.name }}</b>
+                {% if not m.is_active %}<span class="badge bg-secondary">disabled</span>{% endif %}
+                {% if m.push_on_deploy %}<span class="badge bg-info-subtle text-info" title="Pushes automatically after each successful deploy"><i class="bi bi-lightning-charge"></i> on deploy</span>{% endif %}
+                {% if m.force_push %}<span class="badge bg-danger-subtle text-danger" title="Force pushes — overwrites the target">force</span>{% endif %}
+                <span class="text-muted">→ <code>{{ m.short_host }}</code> · <code>{{ m.target_branch }}</code></span>
+                <span class="text-muted">· {{ (m.exclude_patterns or [])|length }} exclude(s)</span>
+                {% if m.last_status %}
+                  · last:
+                  {% if m.last_status == 'success' %}<span class="text-success">success</span>
+                  {% elif m.last_status == 'failed' %}<span class="text-danger">failed</span>
+                  {% else %}<span class="text-muted">{{ m.last_status.replace('_', ' ') }}</span>{% endif %}
+                  {% if m.last_push_at %}<span class="text-muted">{{ m.last_push_at.strftime('%Y-%m-%d %H:%M') }}</span>{% endif %}
+                {% endif %}
+              </div>
+              <div class="text-nowrap">
+                {% if has_perm('mirrors.push') %}
+                  <form method="post" action="{{ url_for('mirrors.mirror_push', mirror_id=m.id) }}" class="d-inline"
+                        data-confirm="Push '{{ br.name }}' to {{ m.name }} ({{ m.short_host }})?\n\nThe current working tree is copied to branch '{{ m.target_branch }}', minus {{ (m.exclude_patterns or [])|length }} excluded pattern(s), and committed as one commit."
+                        data-confirm-ok="Push now" data-confirm-class="btn-primary">
+                    <button class="btn btn-primary btn-sm" type="submit"
+                            {% if not m.is_active %}disabled{% endif %}
+                            title="Copy this branch's code to {{ m.remote_url }}">
+                      <i class="bi bi-arrow-up-right-square"></i> Push to {{ m.name }}
+                    </button>
+                  </form>
+                {% endif %}
+                {% if has_perm('mirrors.manage') %}
+                  <form method="post" action="{{ url_for('mirrors.mirror_test', mirror_id=m.id) }}" class="d-inline">
+                    <button class="btn btn-outline-secondary btn-sm" type="submit" title="Check the remote is reachable — sends no code">
+                      <i class="bi bi-plug"></i>
+                    </button>
+                  </form>
+                  <a class="btn btn-outline-primary btn-sm" title="Edit mirror"
+                     href="{{ url_for('mirrors.mirror_edit', mirror_id=m.id) }}"><i class="bi bi-pencil"></i></a>
+                  <form method="post" action="{{ url_for('mirrors.mirror_delete', mirror_id=m.id) }}" class="d-inline"
+                        data-confirm="Remove mirror '{{ m.name }}'?\n\nOnly the configuration here is deleted — nothing is removed from the remote repository."
+                        data-confirm-ok="Remove mirror">
+                    <button class="btn btn-outline-danger btn-sm" type="submit" title="Delete mirror"><i class="bi bi-trash"></i></button>
+                  </form>
+                {% endif %}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+{% endfor %}
+{% endblock %}

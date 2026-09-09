@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit branch' if mode == 'edit' else 'Add branch' }} · Packwork Deploy{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('admin.dashboard') }}">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{{ url_for('admin.repo_detail', repo_id=repo.id) }}">{{ repo.owner }}/{{ repo.name }}</a></li>
+    <li class="breadcrumb-item active">{{ 'Edit ' + branch.name if mode == 'edit' else 'Add branch' }}</li>
+  </ol>
+</nav>
+
+<div class="row justify-content-center">
+  <div class="col-lg-9">
+    <h3>{{ 'Edit branch' if mode == 'edit' else 'Add a branch' }}</h3>
+    <form method="post" class="card mt-3">
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-4 mb-3">
+            <label class="form-label">Branch name</label>
+            <input class="form-control" name="name" required
+                   value="{{ form.get('name') or (branch.name if branch else '') }}">
+            <div class="form-text">e.g. <code>main</code>, <code>development</code>, <code>testing</code></div>
+          </div>
+          <div class="col-md-8 mb-3">
+            <label class="form-label">Deploy path on this server</label>
+            <input class="form-control mono" name="path" required
+                   value="{{ form.get('path') or (branch.path if branch else '') }}">
+            <div class="form-text">Absolute filesystem path the webhook will <code>git pull</code> into.</div>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Post-deploy commands</label>
+          <div class="form-text mb-2">
+            Run sequentially after <code>git pull</code>. First failure stops the chain.
+            Use the arrows to reorder — the order shown here is the order they execute (manual and auto deploys both use it).
+          </div>
+
+          <div id="commands-list">
+            {% for cmd in commands_list %}
+              <div class="cmd-row d-flex gap-1 align-items-center mb-1">
+                <span class="cmd-index small text-muted text-end" style="width:24px;">{{ loop.index }}.</span>
+                <button type="button" class="btn btn-sm btn-outline-secondary cmd-up" title="Move up"><i class="bi bi-arrow-up"></i></button>
+                <button type="button" class="btn btn-sm btn-outline-secondary cmd-down" title="Move down"><i class="bi bi-arrow-down"></i></button>
+                <input type="text" class="form-control form-control-sm mono" name="commands[]"
+                       value="{{ cmd }}" placeholder="shell command">
+                <button type="button" class="btn btn-sm btn-outline-danger cmd-remove" title="Remove this command"><i class="bi bi-x-lg"></i></button>
+              </div>
+            {% endfor %}
+          </div>
+
+          <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="cmd-add">
+            <i class="bi bi-plus-lg"></i> Add command
+          </button>
+        </div>
+
+        <template id="cmd-row-template">
+          <div class="cmd-row d-flex gap-1 align-items-center mb-1">
+            <span class="cmd-index small text-muted text-end" style="width:24px;"></span>
+            <button type="button" class="btn btn-sm btn-outline-secondary cmd-up" title="Move up"><i class="bi bi-arrow-up"></i></button>
+            <button type="button" class="btn btn-sm btn-outline-secondary cmd-down" title="Move down"><i class="bi bi-arrow-down"></i></button>
+            <input type="text" class="form-control form-control-sm mono" name="commands[]" placeholder="shell command">
+            <button type="button" class="btn btn-sm btn-outline-danger cmd-remove" title="Remove this command"><i class="bi bi-x-lg"></i></button>
+          </div>
+        </template>
+        <div class="mb-3">
+          <label class="form-label">Recipients override (optional)</label>
+          <textarea class="form-control mono" name="recipients" rows="3"
+                    placeholder="leave empty to use the repo-level recipients">{{ recipients_text }}</textarea>
+        </div>
+
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" name="auto_deploy" id="auto_deploy"
+                 {% if mode == 'new' or (branch and branch.auto_deploy) %}checked{% endif %}>
+          <label class="form-check-label" for="auto_deploy">
+            <b>Auto deploy on push</b> — when ticked, every GitHub push automatically runs the commands above.
+            When un-ticked, pushes are recorded as <code>awaiting</code> and a human must click <i>Deploy now</i>.
+          </label>
+        </div>
+
+        <hr>
+        <h6 class="mt-3 mb-2 text-muted">Advanced</h6>
+
+        <div class="mb-3">
+          <label class="form-label">Health check URL <span class="text-muted small">(optional)</span></label>
+          <input class="form-control mono" type="url" name="health_check_url"
+                 value="{{ form.get('health_check_url') or (branch.health_check_url if branch else '') }}"
+                 placeholder="https://your-service.example.com/health">
+          <div class="form-text">After commands succeed, this URL is GET-fetched. Any non-2xx response marks the build failed.</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Schedule (cron) <span class="text-muted small">(optional)</span></label>
+          <input class="form-control mono" name="schedule_cron"
+                 value="{{ form.get('schedule_cron') or (branch.schedule_cron if branch else '') }}"
+                 placeholder="0 3 * * *">
+          <div class="form-text">5-field cron expression in <b>server local time</b>. Example: <code>0 3 * * *</code> = every day at 03:00. Leave blank to disable.</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Environment variables <span class="text-muted small">(optional)</span></label>
+          <div class="form-text mb-2">Exported into the shell before commands run. Each row is one KEY=VALUE pair.</div>
+          <div id="env-list">
+            {% for k, v in env_vars.items() %}
+              <div class="env-row d-flex gap-1 mb-1">
+                <input type="text" class="form-control form-control-sm mono" name="env_key[]" value="{{ k }}" placeholder="KEY" style="flex:0 0 220px;">
+                <input type="text" class="form-control form-control-sm mono" name="env_value[]" value="{{ v }}" placeholder="value">
+                <button type="button" class="btn btn-sm btn-outline-danger env-remove" title="Remove"><i class="bi bi-x-lg"></i></button>
+              </div>
+            {% endfor %}
+          </div>
+          <button type="button" class="btn btn-sm btn-outline-primary mt-1" id="env-add">
+            <i class="bi bi-plus-lg"></i> Add variable
+          </button>
+        </div>
+        <template id="env-row-template">
+          <div class="env-row d-flex gap-1 mb-1">
+            <input type="text" class="form-control form-control-sm mono" name="env_key[]" placeholder="KEY" style="flex:0 0 220px;">
+            <input type="text" class="form-control form-control-sm mono" name="env_value[]" placeholder="value">
+            <button type="button" class="btn btn-sm btn-outline-danger env-remove" title="Remove"><i class="bi bi-x-lg"></i></button>
+          </div>
+        </template>
+
+        {% if mode == 'edit' %}
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="is_active" id="is_active"
+                   {% if branch.is_active %}checked{% endif %}>
+            <label class="form-check-label" for="is_active">Active</label>
+          </div>
+        {% endif %}
+        <button class="btn btn-primary" type="submit">{{ 'Save' if mode == 'edit' else 'Add branch' }}</button>
+        <a class="btn btn-link" href="{{ url_for('admin.repo_detail', repo_id=repo.id) }}">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  const list   = document.getElementById('commands-list');
+  const addBtn = document.getElementById('cmd-add');
+  const tmpl   = document.getElementById('cmd-row-template');
+
+  function renumber() {
+    list.querySelectorAll('.cmd-row').forEach((row, i) => {
+      row.querySelector('.cmd-index').textContent = (i + 1) + '.';
+    });
+  }
+
+  // Click delegation for up/down/remove
+  list.addEventListener('click', function (e) {
+    const row = e.target.closest('.cmd-row');
+    if (!row) return;
+    if (e.target.closest('.cmd-up')) {
+      const prev = row.previousElementSibling;
+      if (prev) list.insertBefore(row, prev);
+    } else if (e.target.closest('.cmd-down')) {
+      const next = row.nextElementSibling;
+      if (next) list.insertBefore(next, row);
+    } else if (e.target.closest('.cmd-remove')) {
+      row.remove();
+    } else {
+      return;
+    }
+    renumber();
+  });
+
+  addBtn.addEventListener('click', function () {
+    const clone = tmpl.content.firstElementChild.cloneNode(true);
+    list.appendChild(clone);
+    renumber();
+    clone.querySelector('input').focus();
+  });
+
+  // Initial numbering (in case the template loop didn't set it correctly,
+  // and to keep behavior consistent after server re-renders).
+  renumber();
+
+  // --- env vars row management ---
+  const envList = document.getElementById('env-list');
+  const envAdd  = document.getElementById('env-add');
+  const envTmpl = document.getElementById('env-row-template');
+  envList.addEventListener('click', function (e) {
+    if (e.target.closest('.env-remove')) {
+      const row = e.target.closest('.env-row');
+      if (row) row.remove();
+    }
+  });
+  envAdd.addEventListener('click', function () {
+    const clone = envTmpl.content.firstElementChild.cloneNode(true);
+    envList.appendChild(clone);
+    clone.querySelector('input[name="env_key[]"]').focus();
+  });
+})();
+</script>
+{% endblock %}

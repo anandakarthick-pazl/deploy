@@ -1,0 +1,498 @@
+{% extends "base.html" %}
+{% block title %}Terminal · {{ branding.name }}{% endblock %}
+{% block content %}
+
+<style>
+  .term-output {
+    background: #0b1020; color: #d4d4d4; padding: 14px;
+    border-radius: var(--radius); font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px; line-height: 1.5;
+    height: 50vh; overflow: auto;
+    white-space: pre-wrap; word-break: break-all;
+    border: 1px solid var(--border);
+  }
+  .term-form .cmd-input { font-family: 'JetBrains Mono', monospace; font-size: 13.5px; }
+  .snip-card { cursor: pointer; padding: 10px 12px; border: 1px solid var(--border);
+               border-radius: 8px; transition: border-color .12s; background: var(--surface); }
+  .snip-card:hover { border-color: var(--accent); }
+  .snip-card .label { font-weight: 600; font-size: 13px; }
+  .snip-card .cmd   { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--text-muted); margin-top: 2px;
+                      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .run-row { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; }
+</style>
+
+<div class="d-flex justify-content-between align-items-end mb-3">
+  <div>
+    <h3 class="mb-0">Terminal</h3>
+    <div class="small-muted">Two modes: <b>one-shot runner</b> for quick commands, or a full <b>interactive shell</b> below for vim / htop / tab-completion.</div>
+  </div>
+</div>
+
+{% if current_server %}
+  <div class="alert alert-warning d-flex align-items-center mb-3">
+    <i class="bi bi-broadcast me-2" style="font-size:1.2rem;color:#f59e0b;"></i>
+    <div>
+      Commands and the interactive shell are running against
+      <b>{{ current_server.name }}</b> <code class="ms-1">{{ current_server.label }}</code>.
+      Switch to <b>Local server</b> in the sidebar to come back.
+    </div>
+  </div>
+{% endif %}
+
+<ul class="nav nav-tabs mb-3" role="tablist">
+  <li class="nav-item">
+    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-runner" type="button"
+            role="tab"><i class="bi bi-lightning-charge"></i> One-shot runner</button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-interactive" type="button"
+            role="tab" id="interactive-tab-btn"><i class="bi bi-terminal-fill"></i> Interactive shell</button>
+  </li>
+</ul>
+
+<div class="tab-content">
+<div class="tab-pane fade show active" id="tab-runner" role="tabpanel">
+
+<div class="row">
+  <div class="col-lg-8">
+    <!-- Command form -->
+    <form id="run-form" class="card mb-3 term-form">
+      <div class="card-body">
+        <div class="row g-2">
+          <div class="col-md-9">
+            <label class="form-label small text-muted mb-1">Command</label>
+            <input class="form-control cmd-input" id="cmd-input" name="command"
+                   placeholder='ls -la, df -h, systemctl status nginx, …' required autofocus>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small text-muted mb-1">Timeout (s)</label>
+            <input class="form-control" type="number" name="timeout" value="600" min="1" max="3600">
+          </div>
+          <div class="col-md-9">
+            <label class="form-label small text-muted mb-1">Working directory</label>
+            <input class="form-control cmd-input" id="cwd-input" name="cwd"
+                   placeholder="{{ default_cwd }}">
+          </div>
+          <div class="col-md-3 d-grid align-self-end">
+            <button class="btn btn-primary" type="submit"><i class="bi bi-play-fill"></i> Run</button>
+          </div>
+        </div>
+      </div>
+    </form>
+
+    <!-- Live output -->
+    <div class="card mb-3">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h6 class="card-title mb-0" id="output-title">Idle — waiting for a command</h6>
+          <div class="d-flex gap-2 align-items-center">
+            <span id="output-status" class="badge bg-secondary">none</span>
+            <button id="kill-btn" class="btn btn-sm btn-outline-danger" disabled>
+              <i class="bi bi-stop-fill"></i> Kill
+            </button>
+          </div>
+        </div>
+        <pre id="output" class="term-output"></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <!-- Snippets -->
+    <div class="card mb-3">
+      <div class="card-body">
+        <h6 class="card-title mb-2">Snippets</h6>
+        <p class="small-muted mb-2">Click a snippet to load it into the form.</p>
+        {% if snippets %}
+          <div class="d-flex flex-column gap-2">
+            {% for s in snippets %}
+              <div class="d-flex gap-2 align-items-start">
+                <div class="snip-card flex-grow-1"
+                     data-cmd="{{ s.command|e }}"
+                     data-cwd="{{ s.cwd or '' }}">
+                  <div class="label">{{ s.label }}</div>
+                  <div class="cmd">{{ s.command }}</div>
+                </div>
+                <form method="post" action="{{ url_for('term.snippet_delete', snippet_id=s.id) }}" class="d-inline"
+                      data-confirm="Delete snippet '{{ s.label }}'?" data-confirm-ok="Delete">
+                  <button class="btn btn-link btn-sm p-0 text-danger" type="submit" title="Delete snippet">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </form>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="small-muted">No snippets saved yet.</p>
+        {% endif %}
+
+        <hr>
+        <form method="post" action="{{ url_for('term.snippet_new') }}" class="d-flex flex-column gap-1">
+          <input class="form-control form-control-sm" name="label" placeholder="Snippet name" required>
+          <input class="form-control form-control-sm mono" name="command" placeholder="command to save" required>
+          <input class="form-control form-control-sm mono" name="cwd" placeholder="(optional cwd)">
+          <button class="btn btn-outline-primary btn-sm align-self-start" type="submit">
+            <i class="bi bi-plus-lg"></i> Save snippet
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Recent runs -->
+    <div class="card">
+      <div class="card-body p-0">
+        <h6 class="card-title px-3 pt-3 mb-0">Recent runs</h6>
+        <table class="table table-sm align-middle mb-0">
+          <tbody>
+            {% for r in runs %}
+              <tr class="run-row">
+                <td class="ps-3" style="max-width: 280px;">
+                  <a href="#" class="show-run text-decoration-none" data-id="{{ r.id }}"
+                     title="Reopen output for run #{{ r.id }}">
+                    <div class="text-truncate" style="max-width: 260px;">{{ r.command }}</div>
+                  </a>
+                  <div class="small-muted">{{ r.started_at.strftime('%H:%M:%S') }} · {{ r.username or '—' }}</div>
+                </td>
+                <td>
+                  {% if r.status == 'running' %}<span class="badge bg-info-subtle text-info">running</span>
+                  {% elif r.status == 'done' %} <span class="badge bg-success-subtle text-success">done</span>
+                  {% elif r.status == 'failed' %}<span class="badge bg-danger-subtle text-danger">failed</span>
+                  {% elif r.status == 'killed' %}<span class="badge bg-secondary">killed</span>
+                  {% elif r.status == 'timeout' %}<span class="badge bg-warning text-dark">timeout</span>
+                  {% endif %}
+                  {% if r.exit_code is not none %}<span class="small-muted">{{ r.exit_code }}</span>{% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td class="text-center text-muted py-3" colspan="2">No runs yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div> <!-- /tab-runner -->
+
+<div class="tab-pane fade" id="tab-interactive" role="tabpanel">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+  <style>
+    .pty-shell {
+      background: #0b1020; border-radius: var(--radius); border: 1px solid var(--border);
+      padding: 10px;
+      height: 65vh;
+      min-height: 420px;
+      overflow: hidden;
+      position: relative;
+      cursor: text;
+      transition: border-color .15s ease;
+    }
+    .pty-shell.focused { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,.18); }
+    .pty-shell .xterm,
+    .pty-shell .xterm-viewport,
+    .pty-shell .xterm-screen { height: 100% !important; }
+    /* Focus hint overlay (visible until user clicks/types) */
+    .pty-focus-hint {
+      position: absolute; top: 10px; right: 14px;
+      font-size: 11px; color: rgba(229,231,235,.55);
+      background: rgba(99,102,241,.12); padding: 3px 8px; border-radius: 6px;
+      pointer-events: none; transition: opacity .25s ease; opacity: 1;
+    }
+    .pty-shell.focused .pty-focus-hint { opacity: 0; }
+    .pty-status { font-size: 12px; color: var(--text-muted); display:inline-flex; align-items:center; }
+    .pty-status .dot { display:inline-block; width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; margin-right: 6px; }
+    .pty-status.connected .dot { background: #10b981; box-shadow: 0 0 0 2px rgba(16,185,129,.2); }
+    .pty-status.disconnected .dot { background: #ef4444; }
+  </style>
+
+  <div class="card">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="card-title mb-0">Interactive bash shell</h6>
+        <div class="d-flex gap-2 align-items-center">
+          <span id="pty-status" class="pty-status disconnected"><span class="dot"></span><span>not connected</span></span>
+          <button id="pty-connect" class="btn btn-sm btn-success"><i class="bi bi-plug"></i> Connect</button>
+          <button id="pty-disconnect" class="btn btn-sm btn-outline-danger" disabled><i class="bi bi-x-octagon"></i> Disconnect</button>
+        </div>
+      </div>
+      <div id="pty-shell" class="pty-shell" tabindex="0">
+        <span class="pty-focus-hint">click here to focus</span>
+      </div>
+      <div class="small-muted mt-2" style="font-family:'JetBrains Mono',monospace;font-size:11px;">
+        WS: <span id="dbg-ws">—</span> · keystrokes captured: <span id="dbg-keys">0</span> · last key: <span id="dbg-lastkey">—</span>
+         · sent: <span id="dbg-sent">0</span> B · recv: <span id="dbg-recv">0</span> B · focused: <span id="dbg-focus">no</span>
+      </div>
+      <div class="small-muted mt-1">
+        Working directory: <code>{{ default_cwd }}</code>.
+        Tab completion, vim, htop, arrow-key history all work. Audit-logged on connect/disconnect.
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.10.0/lib/xterm-addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.11.0/lib/xterm-addon-web-links.min.js"></script>
+  <script>
+  (function () {
+    let term = null, fitAddon = null, ws = null;
+    const shellEl    = document.getElementById('pty-shell');
+    const statusEl   = document.getElementById('pty-status');
+    const statusText = statusEl.querySelector('span:last-child');
+    const connectBtn = document.getElementById('pty-connect');
+    const dcBtn      = document.getElementById('pty-disconnect');
+
+    function setStatus(state, label) {
+      statusEl.className = 'pty-status ' + state;
+      statusText.textContent = label;
+    }
+
+    function containerHasSize() {
+      const r = shellEl.getBoundingClientRect();
+      return r.width > 10 && r.height > 10;
+    }
+
+    function safeFit() {
+      if (!fitAddon || !containerHasSize()) return;
+      try { fitAddon.fit(); } catch (e) { /* ignore */ }
+    }
+
+    function ensureTerminal() {
+      if (term) return true;
+      if (!containerHasSize()) return false;  // tab not yet visible
+
+      term = new Terminal({
+        cursorBlink: true,
+        scrollback: 5000,
+        convertEol: true,
+        fontFamily: '"JetBrains Mono", "Menlo", monospace',
+        fontSize: 14,
+        lineHeight: 1.2,
+        theme: {
+          background: '#0b1020', foreground: '#e5e7eb', cursor: '#818cf8',
+          selectionBackground: 'rgba(99,102,241,.35)',
+          black:   '#0b1020', red:     '#ef4444', green:   '#10b981',
+          yellow:  '#f59e0b', blue:    '#60a5fa', magenta: '#a78bfa',
+          cyan:    '#22d3ee', white:   '#e5e7eb',
+        },
+      });
+      fitAddon = new FitAddon.FitAddon();
+      term.loadAddon(fitAddon);
+      term.loadAddon(new WebLinksAddon.WebLinksAddon());
+      term.open(shellEl);
+      // First fit needs a couple of frames after open() so DOM has measured the canvas
+      requestAnimationFrame(() => requestAnimationFrame(safeFit));
+
+      const dbg = {
+        keys:    document.getElementById('dbg-keys'),
+        last:    document.getElementById('dbg-lastkey'),
+        sent:    document.getElementById('dbg-sent'),
+        recv:    document.getElementById('dbg-recv'),
+        focus:   document.getElementById('dbg-focus'),
+        ws:      document.getElementById('dbg-ws'),
+      };
+      let keysCnt = 0, sentBytes = 0, recvBytes = 0;
+
+      term.onData(d => {
+        keysCnt++; dbg.keys.textContent = keysCnt;
+        dbg.last.textContent = JSON.stringify(d).slice(0, 24);
+        if (ws && ws.readyState === 1) {
+          try {
+            ws.send(JSON.stringify({type:'input', data:d}));
+            sentBytes += d.length; dbg.sent.textContent = sentBytes;
+          } catch (e) {
+            console.error('ws.send failed:', e);
+          }
+        } else {
+          console.warn('keystroke dropped — ws not open', ws && ws.readyState);
+        }
+      });
+      term.onResize(({rows, cols}) => {
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({type:'resize', rows, cols}));
+      });
+
+      // Re-fit on window resize.
+      window.addEventListener('resize', () => requestAnimationFrame(safeFit));
+
+      // ----- Focus handling -----
+      // focusin/focusout bubble, so any descendant getting focus (xterm's
+      // hidden textarea) flips the marker.
+      function markFocused(on) {
+        shellEl.classList.toggle('focused', on);
+        window.__ptyTerminalFocused = on;
+        dbg.focus.textContent = on ? 'yes' : 'no';
+      }
+      shellEl.addEventListener('focusin',  () => markFocused(true));
+      shellEl.addEventListener('focusout', () => markFocused(false));
+
+      // Stop the bubbled keystroke from reaching the global g-shortcut handler
+      // at the document level — but only AFTER xterm has read it (bubble phase).
+      shellEl.addEventListener('keydown', (e) => { e.stopPropagation(); }, false);
+      shellEl.addEventListener('keypress', (e) => { e.stopPropagation(); }, false);
+
+      // Expose counters for the inbound side too
+      term.__dbgIncr = (n) => { recvBytes += n; dbg.recv.textContent = recvBytes; };
+
+      return true;
+    }
+
+    function focusTerm() {
+      if (!term) return;
+      try { term.focus(); } catch (_) {}
+      const helper = shellEl.querySelector('.xterm-helper-textarea');
+      if (helper) helper.focus();
+    }
+
+    function connect() {
+      if (!ensureTerminal()) {
+        setStatus('disconnected', 'waiting for terminal to render — open the tab and try again');
+        return;
+      }
+      // Make sure we report the right size before bash starts.
+      safeFit();
+
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(proto + '://' + location.host + '/pty/ws');
+      setStatus('disconnected', 'connecting…');
+      connectBtn.disabled = true; dcBtn.disabled = true;
+
+      const dbgWs = document.getElementById('dbg-ws');
+      ws.onopen = () => {
+        setStatus('connected', 'connected');
+        dbgWs.textContent = 'open';
+        dcBtn.disabled = false;
+        focusTerm();
+        // Send dimensions explicitly on connect
+        ws.send(JSON.stringify({type:'resize', rows: term.rows, cols: term.cols}));
+      };
+      ws.onmessage = (e) => {
+        let data = e.data;
+        // Control frames (JSON) come back as JSON strings — swallow them.
+        if (typeof data === 'string' && data.length > 1 && data[0] === '{' && data[data.length-1] === '}') {
+          try { const j = JSON.parse(data); if (j && j.type) return; } catch (_) { /* not JSON, write it */ }
+        }
+        if (term.__dbgIncr) term.__dbgIncr((data && data.length) || 0);
+        term.write(data);
+      };
+      ws.onclose = () => {
+        setStatus('disconnected', 'disconnected');
+        dbgWs.textContent = 'closed';
+        connectBtn.disabled = false; dcBtn.disabled = true;
+      };
+      ws.onerror = () => { setStatus('disconnected', 'error — see browser console'); dbgWs.textContent = 'error'; };
+    }
+
+    function disconnect() {
+      if (ws) try { ws.close(); } catch (_) {}
+    }
+
+    connectBtn.addEventListener('click', connect);
+    dcBtn.addEventListener('click', disconnect);
+
+    // When the user switches to the interactive tab, create the terminal and
+    // re-fit. If they have no shell yet, auto-connect after a short delay so
+    // they aren't required to click twice.
+    document.getElementById('interactive-tab-btn').addEventListener('shown.bs.tab', () => {
+      const made = ensureTerminal();
+      // Two RAFs so the layout has stabilized and xterm has measured its glyphs.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        safeFit();
+        focusTerm();
+        if (made && (!ws || ws.readyState >= 2)) connect();    // auto-connect first time
+      }));
+    });
+  })();
+  </script>
+</div> <!-- /tab-interactive -->
+</div> <!-- /tab-content -->
+
+<script>
+(function () {
+  const out      = document.getElementById('output');
+  const statusEl = document.getElementById('output-status');
+  const titleEl  = document.getElementById('output-title');
+  const killBtn  = document.getElementById('kill-btn');
+  const form     = document.getElementById('run-form');
+  const cmdIn    = document.getElementById('cmd-input');
+  const cwdIn    = document.getElementById('cwd-input');
+
+  let currentId = null, offset = 0, pollTimer = null;
+
+  function setStatus(s) {
+    const map = {
+      running: 'bg-info-subtle text-info',
+      done:    'bg-success-subtle text-success',
+      failed:  'bg-danger-subtle text-danger',
+      killed:  'bg-secondary',
+      timeout: 'bg-warning text-dark',
+    };
+    statusEl.className = 'badge ' + (map[s] || 'bg-secondary');
+    statusEl.textContent = s;
+    killBtn.disabled = (s !== 'running');
+  }
+
+  async function poll() {
+    if (!currentId) return;
+    try {
+      const r = await fetch(`/terminal/output/${currentId}?offset=${offset}`);
+      const j = await r.json();
+      if (j.content) {
+        out.appendChild(document.createTextNode(j.content));
+        offset = j.next_offset;
+        out.scrollTop = out.scrollHeight;
+      }
+      setStatus(j.status);
+      if (j.status === 'running') {
+        pollTimer = setTimeout(poll, 700);
+      } else {
+        titleEl.textContent = `Finished — exit ${j.exit_code ?? '?'}`;
+      }
+    } catch (e) {
+      pollTimer = setTimeout(poll, 1500);
+    }
+  }
+
+  function loadRun(id, label) {
+    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+    currentId = id; offset = 0;
+    out.textContent = '';
+    titleEl.textContent = label || `Run #${id}`;
+    setStatus('running');
+    poll();
+  }
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const fd = new FormData(form);
+    if (!fd.get('command').trim()) return;
+    try {
+      const r = await fetch('/terminal/run', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!j.ok) { alert('Failed: ' + j.error); return; }
+      loadRun(j.run_id, fd.get('command'));
+    } catch (err) {
+      alert('Request failed: ' + err);
+    }
+  });
+
+  killBtn.addEventListener('click', async function () {
+    if (!currentId) return;
+    if (!confirm('SIGTERM the running command?')) return;
+    await fetch(`/terminal/kill/${currentId}`, { method: 'POST' });
+  });
+
+  // Click recent run row to re-tail
+  document.querySelectorAll('.show-run').forEach(a => a.addEventListener('click', e => {
+    e.preventDefault();
+    loadRun(parseInt(a.dataset.id), null);
+  }));
+
+  // Snippet click → fill the form
+  document.querySelectorAll('.snip-card').forEach(c => c.addEventListener('click', () => {
+    cmdIn.value = c.dataset.cmd || '';
+    cwdIn.value = c.dataset.cwd || '';
+    cmdIn.focus();
+  }));
+})();
+</script>
+{% endblock %}
